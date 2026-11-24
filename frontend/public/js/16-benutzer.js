@@ -11,6 +11,16 @@ const ROLE_HINT = {
   admin: _t('darf alles: Einstellungen, Personen, Stammdaten löschen, Sicherungen zurückspielen'),
 };
 
+// Funktion der Person: Freitext, die Liste schlägt nur vor. Dazu die schon vergebenen.
+const JOB_TITLES = [_t('Entwicklungsingenieur'), _t('Konstrukteur'), _t('Technischer Zeichner'), _t('Projektleiter'),
+  _t('Produktmanager'), _t('Fertigung'), _t('Qualitätssicherung'), _t('Einkauf'), _t('Geschäftsführung')];
+function _jobTitleList(users) {
+  const all = [...new Set([...JOB_TITLES, ...(users || []).map(u => u.job_title).filter(Boolean)])];
+  return `<datalist id="job-titles">${all.map(t => `<option value="${esc(t)}">`).join('')}</datalist>`;
+}
+// Funktion klein unter dem Namen
+const _jobLine = u => u?.job_title ? `<span class="user-job">${esc(u.job_title)}</span>` : '';
+
 async function loadSession() {
   try { state.session = await api('/api/session'); } catch { state.session = null; }
   _renderUserChip();
@@ -38,7 +48,7 @@ function _renderUserChip() {
     ? `${_avatar(u.name, 22, u.color)}<span class="tb-user-name">${esc(u.name)}</span>`
       + (s.mode === 'team' ? `<span class="tb-user-role">${esc(ROLE_LABEL[u.role] || u.role)}</span>` : '')
     : '<span class="tb-user-name">' + _t('Wer ist dran?') + '</span>';
-  el.title = s.mode === 'team' ? _t('Person wechseln') : _t('Personen verwalten');
+  el.title = (u?.job_title ? u.job_title + ' — ' : '') + (s.mode === 'team' ? _t('Person wechseln') : _t('Personen verwalten'));
 }
 
 async function onUserChip() {
@@ -69,6 +79,7 @@ function _whoTiles(users, currentId) {
       /^#[0-9a-f]{6}$/i.test(u.color || '') ? ` style="--uc:${u.color}"` : ''}>
       ${_avatar(u.name, 44, u.color)}
       <span class="who-name">${esc(u.name)}</span>
+      ${u.job_title ? `<span class="who-job">${esc(u.job_title)}</span>` : ''}
       <span class="who-role">${esc(ROLE_LABEL[u.role] || u.role)}${u.has_pin ? ' · PIN' : ''}</span>
     </button>`).join('');
 }
@@ -183,6 +194,9 @@ function _usersPanel(users, s, admin) {
       <label class="user-color" title="${_t('Farbe ändern — erscheint auf der Kachel bei „Wer ist dran?“')}">${_avatar(u.name, 30, u.color)}
         <input type="color" value="${esc(u.color || '#9db4ff')}" onchange="_saveUser(${u.id}, { color: this.value })"></label>
       <input class="fi" style="flex:1;min-width:120px" value="${esc(u.name)}" onchange="_saveUser(${u.id}, { name: this.value })" aria-label="${_t('Name')}">
+      <input class="fi" style="flex:1;min-width:140px;max-width:220px" list="job-titles" maxlength="60" value="${esc(u.job_title || '')}"
+        placeholder="${_t('Funktion')}" onchange="_saveUser(${u.id}, { job_title: this.value })" aria-label="${_t('Funktion')}"
+        title="${_t('Funktion der Person, z.B. Konstrukteur — aus der Liste oder frei')}">
       <span style="display:inline-flex;align-items:center;gap:4px;flex-shrink:0" title="${_t('Stundensatz dieser Person — leer: es gilt der Standard-Stundensatz')}">
         <input class="fi" type="number" min="0" step="1" style="width:90px" value="${u.hourly_rate ?? ''}"
           placeholder="${stdRate > 0 ? stdRate : _t('Satz')}" onchange="_saveUser(${u.id}, { hourly_rate: this.value })" aria-label="${_t('Stundensatz (CHF/h)')}">
@@ -197,7 +211,7 @@ function _usersPanel(users, s, admin) {
         : `<button class="btn btn-ghost btn-sm" onclick="_saveUser(${u.id}, { active: false })" title="${_t('Bleibt in der Historie, steht aber nicht mehr zur Auswahl')}">${_t('Deaktivieren')}</button>`}
     </div>`;
   const stdRate = parseFloat(state.settings?.hourly_rate) || 0;
-  const readRow = u => `<div class="user-row">${_avatar(u.name, 30, u.color)}<span style="flex:1">${esc(u.name)}</span>${roleChip(u)}</div>`;
+  const readRow = u => `<div class="user-row">${_avatar(u.name, 30, u.color)}<span style="flex:1;display:flex;flex-direction:column">${esc(u.name)}${_jobLine(u)}</span>${roleChip(u)}</div>`;
   const rows = active.map(admin ? editRow : readRow).join('');
   const noPin = mode === 'team' && admin && active.some(u => u.role === 'admin' && !u.has_pin);
 
@@ -205,6 +219,7 @@ function _usersPanel(users, s, admin) {
     <div style="font-size:13px;color:var(--t3);margin-bottom:12px;line-height:1.55">${intro}</div>
     ${!admin ? '<div class="st-notice">' + _t('Personen verwalten dürfen nur Admins.') + '</div>' : ''}
     ${noPin ? `<div class="st-notice">${_t('Ohne PIN kann jede Person die Admin-Kachel wählen — und damit auch Personen verwalten. Wer das verhindern will, setzt beim Admin eine PIN.')}</div>` : ''}
+    ${admin ? _jobTitleList(users) : ''}
     ${rows ? `<div style="display:flex;flex-direction:column;gap:6px">${rows}</div>` : ''}
     ${rows && admin ? '<div style="font-size:12px;color:var(--t4);margin-top:6px">' + _t('Klick auf den farbigen Kreis ändert die Farbe der Person.') + ' '
       + _t('Der Stundensatz gilt für die Zeiten der Person und ergibt die Entwicklungskosten im Datenblatt; leer = Standard-Stundensatz ({rate}).',
@@ -212,6 +227,8 @@ function _usersPanel(users, s, admin) {
     ${admin ? `<div class="user-row" style="margin-top:${rows ? '12px' : '0'}">
       <input class="fi" id="st-user-new" style="flex:1;min-width:120px" placeholder="${mode === 'none' ? _t('Dein Name') : _t('Name der neuen Person')}"
         onkeydown="if(event.key==='Enter')_addUser()">
+      <input class="fi" id="st-user-new-job" style="flex:1;min-width:140px;max-width:220px" list="job-titles" maxlength="60"
+        placeholder="${_t('Funktion (optional)')}" onkeydown="if(event.key==='Enter')_addUser()">
       ${mode !== 'none' ? `<select class="fs" id="st-user-new-role" style="width:auto">
         ${['user', 'superuser', 'admin'].map(r => `<option value="${r}">${ROLE_LABEL[r]}</option>`).join('')}</select>` : ''}
       <button class="btn btn-primary btn-sm" onclick="_addUser()">${mode === 'none' ? _t('Speichern') : _t('+ Person')}</button>
@@ -285,7 +302,7 @@ async function _addUser() {
   const name = V('st-user-new').trim();
   if (!name) return;
   try {
-    await api('/api/users', 'POST', { name, role: V('st-user-new-role') || 'user' });
+    await api('/api/users', 'POST', { name, role: V('st-user-new-role') || 'user', job_title: V('st-user-new-job').trim() });
     toast(_t('{name} angelegt', { name }), 'ok');
   } catch { return; }
   await _renderUsersSettings();

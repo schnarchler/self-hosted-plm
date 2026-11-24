@@ -111,7 +111,7 @@ function _teUserField(p, e) {
   return `<div class="fg"><label class="fl">${_t('Person')}</label>
     <select id="${p}-user" class="fs">
       <option value="">—</option>
-      ${[...users, ...extra].map(u => `<option value="${u.id}"${u.id === sel ? ' selected' : ''}>${esc(u.name)}</option>`).join('')}
+      ${[...users, ...extra].map(u => `<option value="${u.id}"${u.id === sel ? ' selected' : ''}>${esc(u.name)}${u.job_title ? ' · ' + esc(u.job_title) : ''}</option>`).join('')}
     </select></div>`;
 }
 function _teUserValue(p) {
@@ -121,7 +121,8 @@ function _teUserValue(p) {
 // Person in der Liste: Avatar mit Namen, sonst nichts
 function _teUserLine(e) {
   return e.user_name
-    ? `<div style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--t3);margin-top:2px">${_avatar(e.user_name, 16, e.user_color)}${esc(e.user_name)}</div>` : '';
+    ? `<div style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--t3);margin-top:2px">${_avatar(e.user_name, 16, e.user_color)}${esc(e.user_name)}${
+        e.user_job_title ? `<span style="color:var(--t4)">· ${esc(e.user_job_title)}</span>` : ''}</div>` : '';
 }
 
 // Uhrzeiten unter dem Datum in der Liste, leer wenn nur die Dauer erfasst ist

@@ -1070,6 +1070,8 @@ function applySchema() {
   try { db.run('ALTER TABLE users ADD COLUMN color TEXT DEFAULT NULL'); } catch {}
   // Stundensatz pro Person — leer: es gilt der Standard aus den Einstellungen
   try { db.run('ALTER TABLE users ADD COLUMN hourly_rate REAL DEFAULT NULL'); } catch {}
+  // Funktion der Person (Konstrukteur, Entwicklungsingenieur …) — Freitext
+  try { db.run('ALTER TABLE users ADD COLUMN job_title TEXT DEFAULT NULL'); } catch {}
   // Jede Person hat eine Farbe — bestehende bekommen der Reihe nach eine
   migrateOnce('user-colors-v1', () => {
     all('SELECT id FROM users WHERE color IS NULL ORDER BY id').forEach((u, i) =>
@@ -2509,10 +2511,10 @@ const sessions = new Map();                    // Token → { userId, lastActivi
 const sessionCookie = () => 'plm_user_' + PORT; // Cookies kennen keinen Port
 
 function activeUsers() {
-  return all(`SELECT id, name, role, color, pin_hash, last_seen_at FROM users WHERE active=1
+  return all(`SELECT id, name, role, color, job_title, pin_hash, last_seen_at FROM users WHERE active=1
     ORDER BY COALESCE(last_seen_at,'') DESC, name COLLATE NOCASE`);
 }
-const publicUser = u => u && ({ id: u.id, name: u.name, role: u.role, color: u.color || null, has_pin: !!u.pin_hash });
+const publicUser = u => u && ({ id: u.id, name: u.name, role: u.role, color: u.color || null, job_title: u.job_title || null, has_pin: !!u.pin_hash });
 const userMode = users => users.length === 0 ? 'none' : users.length === 1 ? 'single' : 'team';
 function idleMinutes() {
   const v = parseFloat(getSetting('user_idle_minutes', '30'));
@@ -2656,7 +2658,7 @@ app.put('/api/session/pin', (req, res) => {
 });
 
 app.get('/api/users', (req, res) => {
-  const users = all(`SELECT id, name, role, color, active, created_at, last_seen_at, pin_hash IS NOT NULL AS has_pin, hourly_rate
+  const users = all(`SELECT id, name, role, color, job_title, active, created_at, last_seen_at, pin_hash IS NOT NULL AS has_pin, hourly_rate
     FROM users ORDER BY active DESC, name COLLATE NOCASE`);
   // Stundensätze sehen nur Admins (allein ist man Admin)
   const admin = req.plmMode !== 'team' || req.plmUser?.role === 'admin';
@@ -2664,6 +2666,7 @@ app.get('/api/users', (req, res) => {
   res.json(users);
 });
 const cleanName = n => String(n ?? '').replace(/\s+/g, ' ').trim().slice(0, 40);
+const cleanJobTitle = t => String(t ?? '').replace(/\s+/g, ' ').trim().slice(0, 60);
 const nameTaken = (name, exceptId) => all('SELECT id, name FROM users WHERE active=1')
   .some(u => u.id !== exceptId && u.name.toLowerCase() === name.toLowerCase());
 
@@ -2676,8 +2679,8 @@ app.post('/api/users', (req, res) => {
   const role = before.length === 0 ? 'admin' : (ROLES.includes(req.body?.role) ? req.body.role : 'user');
   const pin = req.body?.pin ? String(req.body.pin) : '';
   if (pin && !validPin(pin)) return res.status(400).json({ error: 'Die PIN braucht 4 bis 12 Zeichen' });
-  const id = runGetId('INSERT INTO users (name, role, color, pin_hash) VALUES (?,?,?,?)',
-    [name, role, validColor(req.body?.color) || nextUserColor(), pin ? hashPin(pin) : null]);
+  const id = runGetId('INSERT INTO users (name, role, color, pin_hash, job_title) VALUES (?,?,?,?,?)',
+    [name, role, validColor(req.body?.color) || nextUserColor(), pin ? hashPin(pin) : null, cleanJobTitle(req.body?.job_title) || null]);
   log('user', id, 'Person angelegt', `${name} (${ROLE_LABEL[role]})`);
   // Aus „allein" wird „Team": Die bisherige Person bleibt an diesem Gerät gewählt
   if (before.length === 1 && !resolveUser(req).session) startSession(req, res, before[0].id);
@@ -2696,6 +2699,7 @@ app.put('/api/users/:id', (req, res) => {
   const rateIn = b.hourly_rate === '' || b.hourly_rate == null ? null : parseFloat(b.hourly_rate);
   if (b.hourly_rate !== undefined && rateIn !== null && !(rateIn >= 0)) return res.status(400).json({ error: 'Stundensatz als Zahl' });
   const rate = b.hourly_rate !== undefined ? (rateIn || null) : u.hourly_rate;
+  const job = b.job_title !== undefined ? (cleanJobTitle(b.job_title) || null) : u.job_title;
   if (!name) return res.status(400).json({ error: 'Name fehlt' });
   if (!ROLES.includes(role)) return res.status(400).json({ error: 'Unbekannte Rolle' });
   if (active && nameTaken(name, u.id)) return res.status(400).json({ error: `„${name}" gibt es schon` });
@@ -2708,11 +2712,12 @@ app.put('/api/users/:id', (req, res) => {
     if (b.pin && !validPin(b.pin)) return res.status(400).json({ error: 'Die PIN braucht 4 bis 12 Zeichen' });
     pinHash = b.pin ? hashPin(String(b.pin)) : null;
   }
-  run('UPDATE users SET name=?, role=?, active=?, color=?, pin_hash=?, hourly_rate=? WHERE id=?', [name, role, active, color, pinHash, rate, u.id]);
+  run('UPDATE users SET name=?, role=?, active=?, color=?, pin_hash=?, hourly_rate=?, job_title=? WHERE id=?', [name, role, active, color, pinHash, rate, job, u.id]);
   if (!active) endSessionsOf(u.id);
   const changes = [name !== u.name && `Name ${u.name} → ${name}`, role !== u.role && `Rolle ${ROLE_LABEL[role]}`,
     active !== u.active && (active ? 'aktiviert' : 'deaktiviert'), color !== u.color && 'Farbe',
     rate !== u.hourly_rate && (rate ? `Stundensatz ${rate}/h` : 'Stundensatz entfernt'),
+    job !== u.job_title && (job ? `Funktion ${job}` : 'Funktion entfernt'),
     pinHash !== u.pin_hash && (pinHash ? 'PIN gesetzt' : 'PIN entfernt')]
     .filter(Boolean);
   if (changes.length) log('user', u.id, 'Person geändert', `${name}: ${changes.join(', ')}`);
@@ -8551,7 +8556,7 @@ app.get('/api/raw-materials/:id/prices', (req, res) => {
 
 app.get('/api/time-entries', (req, res) => {
   const { order_id, item_id } = req.query;
-  const sql = `SELECT te.*, u.name AS user_name, u.color AS user_color FROM time_entries te
+  const sql = `SELECT te.*, u.name AS user_name, u.color AS user_color, u.job_title AS user_job_title FROM time_entries te
     LEFT JOIN users u ON u.id = te.user_id WHERE te.%s=? ORDER BY te.date DESC, te.id DESC`;
   if (item_id) return res.json(all(sql.replace('%s', 'item_id'), [item_id]));
   if (!order_id) return res.status(400).json({ error: 'Auftrag oder Item fehlt' });

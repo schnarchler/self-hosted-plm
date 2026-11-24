@@ -386,6 +386,8 @@ body {
 .who-tile.picked { border-color: var(--blue); }
 .who-name { font-size: 14px; font-weight: 600; text-align: center; overflow-wrap: anywhere; }
 .who-role { font-size: 11px; color: var(--t3); }
+.who-job { font-size: 12px; color: var(--t2); text-align: center; overflow-wrap: anywhere; margin-top: -4px; }
+.user-job { font-size: 12px; color: var(--t3); }
 .who-pin { margin-top: 16px; }
 .who-err { min-height: 1em; margin-top: 6px; font-size: 12px; color: var(--red); }
 .who-foot { display: flex; justify-content: flex-end; margin-top: 16px; }

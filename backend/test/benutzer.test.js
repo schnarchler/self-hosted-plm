@@ -187,6 +187,27 @@ test('Farben: jede Person bekommt eine eigene, der Admin kann sie ändern', asyn
   await ok(`/api/users/${ids.ben}`, { method: 'PUT', body: { color: ben0 }, cookie: anna });
 });
 
+test('Funktion: frei wählbar, auf den Kacheln und bei den Zeiten', async () => {
+  assert.strictEqual((await req(`/api/users/${ids.ben}`, { method: 'PUT', body: { job_title: 'Chef' }, cookie: cleo })).status, 403,
+    'nur Admins');
+  const b = (await ok(`/api/users/${ids.ben}`, { method: 'PUT', body: { job_title: '  Konstrukteur  ' }, cookie: anna })).body;
+  assert.strictEqual(b.job_title, 'Konstrukteur');
+  assert.strictEqual((await ok('/api/session', { cookie: ben })).body.users.find(u => u.id === ids.ben).job_title, 'Konstrukteur',
+    'auf der Kachel bei „Wer ist dran?“');
+  assert.strictEqual((await ok('/api/users', { cookie: ben })).body.find(u => u.id === ids.ben).job_title, 'Konstrukteur',
+    'für alle sichtbar');
+  assert.ok((await log(e => e.entity_type === 'user' && e.entity_id === ids.ben && /Funktion Konstrukteur/.test(e.details || ''))),
+    'in der Historie');
+
+  const o = (await ok('/api/orders', { method: 'POST', body: { title: 'Funktion' }, cookie: ben })).body;
+  await ok('/api/time-entries', { method: 'POST', body: { order_id: o.id, hours: 1 }, cookie: ben });
+  assert.strictEqual((await ok(`/api/time-entries?order_id=${o.id}`, { cookie: ben })).body[0].user_job_title, 'Konstrukteur');
+  await ok(`/api/orders/${o.id}`, { method: 'DELETE', cookie: anna });
+
+  await ok(`/api/users/${ids.ben}`, { method: 'PUT', body: { job_title: '' }, cookie: anna });
+  assert.strictEqual((await ok('/api/users', { cookie: anna })).body.find(u => u.id === ids.ben).job_title, null, 'leer entfernt sie');
+});
+
 test('Stundensatz pro Person: Zeiten tragen die Person, das Datenblatt rechnet die Entwicklungskosten', async () => {
   const proj = (await ok('/api/projects', { method: 'POST', body: { name: 'Kosten' }, cookie: anna })).body;
   const teil = (await ok(`/api/projects/${proj.id}/items`, { method: 'POST', body: { name: 'Halter', item_type: 'prt' }, cookie: anna })).body;
