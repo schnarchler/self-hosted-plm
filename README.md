@@ -13,7 +13,8 @@ Runs locally on Linux and Windows: no internet connection, no cloud, no account.
 - **🖨 Made for 3D printing** — drop in a `.3mf` and PLM takes over layer height, infill,
   temperatures, material and printer, and calculates costs from weight and print time.
 - **🏷 A short code on every part** — print `9U7-1` on the part; typing or scanning it opens
-  exactly that part in exactly that revision.
+  exactly that part in exactly that revision. 3 characters cover around 10,000 parts; up to 6
+  characters there are around 118 million codes.
 - **🚚 Knows what each customer received** — on delivery, PLM pins the revision of every part,
   down to the full assembly structure: "which customer has which revision?" is one click.
 - **🔎 Traceability for recalls** — which material lot went into which production order,
@@ -210,8 +211,12 @@ Implement (creates the revision to work in for each part) → Done.
 - Standard parts usable in BOMs
 - Files per revision: CAD, G-code, PDF, images, documents …
 - Automatic file type detection (STL/3MF/STEP → CAD, .gcode → G-code …)
-- Weight per part (editable inline), development time tracking; assemblies without their
-  own weight sum up the parts and standard parts in their BOM
+- Weight per part (editable inline); assemblies without their own weight sum up the parts and
+  standard parts in their BOM
+- **Time tracking per person**: every entry with its person and the hourly rate at the time it
+  was logged; data sheet with **development time** and **development costs** (including the BOM,
+  total only); the Times tab shows an **overview by person** (costs for admins only)
+- Checkout import: optionally open the new item right away
 - **Classification**: coloured chips, configurable under Settings → Classifications
 - **Properties per classification**, e.g. material, surface finish, manufacturer; shown on
   the data sheet, on the PDF and in search, optionally mandatory for release
@@ -253,7 +258,7 @@ Implement (creates the revision to work in for each part) → Done.
 - Customer management (KD-0001)
 - Customer can also be entered as free text
 - **Quote as an order phase**: one record instead of two (see below)
-- Orders with invoice PDF, including labour time as a line item
+- Orders with invoice PDF, including labour time as a line item (at the default hourly rate)
 - Accepting a quote is a phase change: same number, same lines
 - **Deleting a customer keeps the documents**: the name moves into the free-text field,
   invoices can still be reprinted in full
@@ -331,11 +336,12 @@ When adding a line, the following costs can be calculated automatically:
 Sections by topic on the left, the page on the right; every page with inputs has its own Save
 button. Settings reopen on the page used last.
 - **General**: **Appearance** (language, font size, design), **Users** (user, superuser, admin;
-  names in history and release), **Version** (running version, updates, what has changed)
+  names in history and release; function and hourly rate per person; **⏱ Times**: which projects
+  and orders someone worked on and for how long, by period), **Version** (running version, updates, what has changed)
 - **Data**: **Backup & export** (create, download and restore backups; export, file index),
   **Storage location** (data path, moving the data)
-- **Company & documents**: **Company** (letterhead, logo, bank), **Documents & prices** (VAT, hourly
-  rate, document language, footers), **Receipts & labels**, **Numbering** (prefixes, digits, revision format)
+- **Company & documents**: **Company** (letterhead, logo, bank), **Documents & prices** (VAT, default
+  hourly rate, document language, footers), **Receipts & labels**, **Numbering** (prefixes, digits, revision format)
 - **PLM**: **Classifications** (name + colour, drag & drop; renaming carries over to the items),
   **Release** (workflow, two-person approval, checks before release), **Inspection report**
 - **Workshop**: **3D printing** (slicer, printers, nozzles, material profiles), **CAD & checkout** (per PC)
@@ -752,7 +758,9 @@ devices can reach it is decided by the PC's firewall.
 - Check for package vulnerabilities: `cd backend && npm audit --omit=dev`
 
 Users (Settings → Users) are for traceability, not for protection: they are selected
-without a password; each person can protect their tile with a PIN. Usage: see
+without a password; each person can protect their tile with a PIN. Hourly rates, costs and the
+**⏱ Times** report are only sent to admins by the server. Deleting an item, project or order does
+not delete its times: the entries stay, with the number and name from back then. Usage: see
 [HANDBUCH.md](HANDBUCH.md), chapter Settings → Users.
 
 ---

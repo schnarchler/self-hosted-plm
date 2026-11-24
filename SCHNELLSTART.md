@@ -29,9 +29,9 @@ es übernehmen soll ([Handbuch, Kapitel 2](HANDBUCH.md#daten-auf-einem-netzlaufw
 Alles unter **Einstellungen**:
 
 1. **Firma** — Name, Adresse, Bankverbindung, Logo (für Angebote, Rechnungen, Lieferscheine)
-2. **Kalkulation** — Stundenansatz, MwSt., Zahlungsbedingungen
+2. **Kalkulation** — Standard-Stundensatz, MwSt., Zahlungsbedingungen
 3. **3D-Druck** — Drucker (mit CHF/h) und Düsen
-4. **Benutzer** — Personen mit Rolle, wenn mehrere mit PLM arbeiten
+4. **Benutzer** — Personen mit Rolle, Funktion und eigenem Stundensatz (für die Entwicklungskosten)
 5. **Daten → Checkout-Verzeichnis** — wenn mit CAD gearbeitet wird; gilt nur für diesen PC
 6. **PLM → Freigabe-Workflow** — **Mit Freigabe** (Standard) oder **Ohne Freigabe**
 

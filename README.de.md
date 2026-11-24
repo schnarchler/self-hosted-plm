@@ -12,7 +12,8 @@ Läuft lokal auf Linux/Windows – kein Internet, kein Cloud-Zwang.
 - **🖨 Für den 3D-Druck gemacht** — eine `.3mf` hochladen, und PLM übernimmt Schichthöhe,
   Füllung, Temperaturen, Material und Drucker und rechnet die Kosten aus Gewicht und Druckzeit.
 - **🏷 Ein Kurzcode auf jedem Teil** — `9U7-1` aufs Teil drucken; eintippen oder scannen öffnet
-  genau dieses Teil in genau dieser Revision.
+  genau dieses Teil in genau dieser Revision. 3 Zeichen reichen für rund 10'000 Teile, bis 6
+  Zeichen gibt es rund 118 Millionen Codes.
 - **🚚 Weiss, was jeder Kunde bekommen hat** — beim Liefern hält PLM die Revision jedes Teils
   fest, bis in die ganze Baugruppe: „Welcher Kunde hat welchen Stand?“ ist ein Klick.
 - **🔎 Rückverfolgung für den Rückruf** — welche Material-Charge in welchem Produktionsauftrag,
@@ -188,8 +189,12 @@ ECO-Weg steht dort weiterhin zur Verfügung.
 - Normteile in BOM einsetzbar
 - Dateien pro Revision: CAD, GCODE, PDF, Bilder, Dokumente …
 - Automatische Dateityp-Erkennung (STL/3MF/STEP → CAD, .gcode → GCODE …)
-- Gewicht pro Part (direkt inline editierbar), Entwicklungszeiten erfassbar; Baugruppen ohne
-  eigenes Gewicht summieren Teile und Normteile der Stückliste
+- Gewicht pro Part (direkt inline editierbar); Baugruppen ohne eigenes Gewicht summieren Teile
+  und Normteile der Stückliste
+- **Zeiterfassung pro Person** – jede Zeit mit Person und dem Stundensatz beim Erfassen;
+  Datenblatt mit **Entwicklungszeit** und **Entwicklungskosten** (samt Stückliste, nur das Total);
+  im Tab Zeiten die **Übersicht nach Person** (Kosten nur für Admins)
+- Checkout-Import: neues Item auf Wunsch gleich öffnen
 - **Klassifizierung** – farbige Chips, konfigurierbar unter Einstellungen → Klassifizierungen
 - **Eigenschaften je Klassifizierung** – z. B. Werkstoff, Oberfläche, Hersteller; im Datenblatt,
   auf der PDF und in der Suche, optional Pflicht für die Freigabe
@@ -230,7 +235,7 @@ ECO-Weg steht dort weiterhin zur Verfügung.
 - Kundenverwaltung (KD-0001)
 - Kunde als Freitext eingeben möglich
 - **Angebot als Auftragsphase** – ein Vorgang statt zwei Datensätze (siehe unten)
-- Aufträge mit Rechnungs-PDF inkl. Arbeitszeit als Position
+- Aufträge mit Rechnungs-PDF inkl. Arbeitszeit als Position (zum Standard-Stundensatz)
 - Angebot annehmen heisst Phasenwechsel — gleiche Nummer, gleiche Positionen
 - **Kunde löschen behält die Belege**: der Name wandert ins Freitextfeld, Rechnungen
   bleiben vollständig nachdruckbar
@@ -301,10 +306,11 @@ Beim Hinzufügen einer Position können folgende Kosten automatisch berechnet we
 Links die Bereiche nach Thema, rechts die Seite; jede Seite mit Eingaben hat ihren eigenen
 Speichern-Knopf. Beim Öffnen erscheint die zuletzt gewählte Seite.
 - **Allgemein** – **Darstellung** (Sprache, Schriftgrösse, Design), **Benutzer** (User, Superuser,
-  Admin; Namen in Historie und Freigabe), **Version** (laufende Version, Updates, was sich geändert hat)
+  Admin; Namen in Historie und Freigabe; Funktion und Stundensatz pro Person; **⏱ Zeiten**: wer für
+  welche Projekte und Aufträge wie lange gearbeitet hat, nach Zeitraum), **Version** (laufende Version, Updates, was sich geändert hat)
 - **Daten** – **Sicherung & Export** (Sicherungen anlegen, herunterladen, wiederherstellen; Export,
   Datei-Index), **Speicherort** (Datenpfad, Daten verschieben)
-- **Firma & Belege** – **Firma** (Briefkopf, Logo, Bank), **Belege & Preise** (MwSt., Stundensatz,
+- **Firma & Belege** – **Firma** (Briefkopf, Logo, Bank), **Belege & Preise** (MwSt., Standard-Stundensatz,
   Sprache der Belege, Fusszeilen), **Bon & Etiketten**, **Nummerierung** (Präfixe, Stellen, Revisionsformat)
 - **PLM** – **Klassifizierungen** (Name + Farbe, Drag&Drop, Umbenennen überträgt sich auf die Items),
   **Freigabe** (Workflow, Vier-Augen-Prinzip, Prüfung vor der Freigabe), **Prüfprotokoll**
@@ -709,7 +715,10 @@ Geräte herankommen, entscheidet die Firewall des PCs.
 - Paketlücken prüfen: `cd backend && npm audit --omit=dev`
 
 Die Benutzer (Einstellungen → Benutzer) dienen der Nachvollziehbarkeit, nicht als Schutz:
-gewählt wird ohne Passwort; jede Person kann ihre Kachel mit einer PIN schützen. Bedienung siehe
+gewählt wird ohne Passwort; jede Person kann ihre Kachel mit einer PIN schützen. Stundensätze,
+Kosten und die Auswertung **⏱ Zeiten** liefert der Server nur an Admins aus. Gelöschte Items,
+Projekte und Aufträge nehmen ihre Zeiten nicht mit: Die Einträge bleiben, mit Nummer und Name von
+damals. Bedienung siehe
 [HANDBUCH.md](HANDBUCH.md), Kapitel Einstellungen → Benutzer.
 
 ---

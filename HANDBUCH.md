@@ -391,6 +391,11 @@ Die Nummern der ERP-Belege stehen unter [26. Nummernkreise](#26-nummernkreise).
 Der Tab **Datenblatt** zeigt Beschreibung, Quelle, Kennzahlen (Gewicht, Preis), Druckparameter,
 eine Kurzfassung der Stückliste, den Lagerbestand und die letzte Änderung.
 
+- **Entwicklungszeit** und **Entwicklungskosten** (unter **Kaufmännisch**) — die Summe aller Zeiten
+  aus dem Tab **Zeiten**, bei Baugruppen samt den Teilen der Stückliste. Die Kosten erscheinen nur,
+  wenn ein Stundensatz hinterlegt ist (siehe 6.14). Wer wie lange daran gearbeitet hat, steht nicht
+  im Datenblatt — auch nicht im gedruckten. Das zeigt nur der Tab **Zeiten**.
+
 - **QR-Code** der Item-Nummer oben rechts — ein Klick zeigt ihn gross
 - **Kurzcode** mit Revision, z. B. `XHJ-1` — **⧉** kopiert ihn (siehe 6.8). Daneben die gewählte
   Revision mit Status (z. B. `rev1 · DFT`) und, falls ausgecheckt, der Checkout-Ordner.
@@ -414,14 +419,36 @@ Ein leeres Feld entfernt den Hinweis.
 
 ### 6.8 Kurzcode
 
-Jedes Part und jede Baugruppe bekommt automatisch einen kurzen Code aus drei bis vier Zeichen,
-z. B. `XHJ`. Er ist zum **Aufdrucken auf das Teil** gedacht: im Slicer mit dem Textwerkzeug,
-am besten vertieft auf der Unterseite, mindestens 3 mm hoch.
+Jedes Part und jede Baugruppe bekommt automatisch einen kurzen Code, z. B. `XHJ`. Er ist zum
+**Aufdrucken auf das Teil** gedacht: im Slicer mit dem Textwerkzeug, am besten vertieft auf der
+Unterseite, mindestens 3 mm hoch.
 
 Hinter dem Strich steht die Revision: `XHJ-1` = rev1. Bei einer neuen Revision nur die Zahl anpassen.
 
 Wer den Kurzcode in die Suche eingibt (auch per Barcode-Scanner), landet direkt beim Teil in
-dieser Revision (siehe 18). Dokumente haben keinen Kurzcode.
+dieser Revision (siehe 18). Gross- und Kleinschreibung spielen keine Rolle. Dokumente haben keinen Kurzcode.
+
+**Wie viele Kurzcodes gibt es?**
+
+Der Code besteht aus 22 Zeichen: `3 4 6 7 9 A C D E F H J K M N P R T U W X Y`. Weggelassen sind
+Zeichen, die klein gedruckt leicht verwechselt werden: `0 O Q`, `1 I L`, `2 Z`, `5 S`, `8 B`, `G` und `V`.
+
+| Länge | Mögliche Codes | Beispiel |
+|---|---:|---|
+| 3 Zeichen | 10'648 | `XHJ` |
+| 4 Zeichen | 234'256 | `XHJ7` |
+| 5 Zeichen | 5'153'632 | `XHJ7K` |
+| 6 Zeichen | 113'379'904 | `XHJ7KM` |
+| **Total** | **rund 118,8 Millionen** | |
+
+- PLM vergibt zuerst **3 Zeichen**. Das reicht für rund 10'000 Teile. Erst wenn kaum noch ein
+  3-stelliger Code frei ist, kommen **4 Zeichen** dazu, und so weiter bis 6.
+- Bestehende Codes bleiben gleich, auch wenn neue Teile längere Codes bekommen.
+- Die Codes werden **zufällig** vergeben, nicht fortlaufend. Bei einem Tippfehler landet man so
+  meist bei keinem Teil statt beim falschen. Bei 1'000 Teilen ist etwa jeder elfte 3-stellige
+  Code vergeben.
+- Ein Code wird **nie wiederverwendet**, auch nicht nach dem Löschen eines Teils. Ein gedrucktes
+  Teil zeigt so nie auf ein anderes.
 
 ### 6.9 Gewicht
 
@@ -484,6 +511,26 @@ Baugruppen, die es verwenden  ──►  [ Item ]  ──►  Teile, aus denen e
 
 Tab **Zeiten** → **+ Eintrag**: Stunden direkt eingeben oder **Von** und **Bis** — dann rechnet PLM
 die Stunden selbst aus (auch über Mitternacht). Gleich funktioniert der Tab **Zeiten** eines Auftrags.
+
+**Person:** Jeder Eintrag gehört zu einer Person. Vorgewählt ist, wer gerade dran ist; im Feld
+**Person** lässt sie sich ändern. Die Person steht mit ihrer Funktion unter der Beschreibung.
+
+**Stundensatz:** Beim Speichern hält PLM den Satz fest, der in diesem Moment gilt: den eigenen der
+Person, sonst den Standard-Stundensatz (siehe 20, Benutzer und Belege & Preise).
+
+- Ändert sich ein Satz später, gilt das nur für **neue** Zeiten. Kalkulationen von früher bleiben gleich.
+- Bekommt ein Eintrag eine andere Person, gilt deren heutiger Satz. Nur Datum oder Dauer ändern
+  lässt den Satz, wie er war.
+- Gab es beim Erfassen gar keinen Satz, rechnet der Eintrag mit dem heutigen.
+
+**Übersicht nach Person:** Oben im Tab steht, wer wie lange daran gearbeitet hat: Stunden und
+Anteil pro Person, darunter das Total. Bei Baugruppen zählen die Teile der Stückliste mit, wie die
+Entwicklungszeit im Datenblatt; die Spalte **davon hier** zeigt, was direkt an der Baugruppe
+erfasst wurde. Die Einträge darunter gehören nur zu diesem Item.
+
+**Kosten sehen nur Admins:** Die Kosten pro Person und pro Eintrag (mit Satz) erscheinen nur für
+Admins. **User** und **Superuser** erfassen Zeiten genauso, sehen aber keine Sätze und keine Kosten.
+Allein ist man immer Admin.
 
 ### 6.15 Variantenverwaltung
 
@@ -679,6 +726,9 @@ Bei der Rückfrage: **Als neue Revision hochladen**, **Änderungen verwerfen** (
 - Im Unterordner eines Items → **⬇ Zum Item hinzufügen**
 - Im Hauptordner → **+ Als neues Item anlegen (mit Datei)** oder **+ An Item anhängen**
 
+Beim Anlegen eines neuen Items wählt **Nach dem Anlegen im PLM öffnen**, ob das neue Item gleich
+geöffnet wird oder ob man in der Checkout-Übersicht bleibt. PLM merkt sich die letzte Wahl.
+
 **Mehrere PCs:** Jeder Checkout ist zusätzlich mit dem Namen des PCs in der Datenbank vermerkt.
 Am Item steht dann z. B. **ausgecheckt auf LAPTOP** (auch für die Unterteile einer ausgecheckten
 Baugruppe), die Checkout-Übersicht listet sie unter **Auf anderen PCs ausgecheckt**. Wer ein solches
@@ -753,7 +803,8 @@ Status: `Angebot → Bestätigt → Geliefert → Fakturiert`, ohne vorheriges A
 - letzter Produktionsauftrag geliefert → der Auftrag wird **Geliefert**
 - Rechnung gedruckt → PLM bietet **Fakturiert** an
 
-**Zeit erfassen** — Tab **Zeiten** → **+ Eintrag** (wie 6.14). Die Arbeitszeit kann als Position auf die Rechnung.
+**Zeit erfassen** — Tab **Zeiten** → **+ Eintrag** (wie 6.14, mit Person). Die Arbeitszeit kann als
+Position auf die Rechnung. Verrechnet wird sie zum **Standard-Stundensatz**, nicht zum Satz der Person.
 
 ---
 
@@ -1078,12 +1129,12 @@ nächsten Öffnen erscheint die zuletzt gewählte Seite.
 | Gruppe | Seite | Inhalt |
 |---|---|---|
 | Allgemein | **Darstellung** | Sprache, Schriftgrösse, Farbdesign |
-| | **Benutzer** | wer mit PLM arbeitet, Rollen, PIN |
+| | **Benutzer** | wer mit PLM arbeitet, Rollen, PIN, Funktion, Stundensatz, Zeiten pro Person |
 | | **Version** | laufende Version, nach Updates suchen, Änderungen |
 | Daten | **Sicherung & Export** | Sicherungen, Export, Datei-Index (siehe 21) |
 | | **Speicherort** | Speicherbelegung, Datenpfad, Daten verschieben |
 | Firma & Belege | **Firma** | Briefkopf, Logo, Bankangaben |
-| | **Belege & Preise** | MwSt., Angebotsgültigkeit, Zahlungsbedingungen, Stundensatz, Sprache der Belege, Fusszeilen |
+| | **Belege & Preise** | MwSt., Angebotsgültigkeit, Zahlungsbedingungen, Standard-Stundensatz, Sprache der Belege, Fusszeilen |
 | | **Bon & Etiketten** | Kassabon und Rohmaterial-Etikett (Thermodrucker) |
 | | **Nummerierung** | Präfixe und Stellen der Nummern, Revisionsformat |
 | PLM | **Klassifizierungen** | Liste, Eigenschaften, Standard für neue Teile |
@@ -1112,6 +1163,15 @@ Wer was gemacht hat — für die Nachvollziehbarkeit, nicht als Schutz. Ohne Pas
 
 - **PIN:** Jede Person kann unter Einstellungen eine eigene PIN setzen, ändern oder entfernen (mit der bisherigen PIN). Sie wird beim Wechsel zu dieser Person abgefragt, nicht beim Weitermachen nach einer Pause. Admins können PINs aller Personen setzen oder entfernen, z. B. wenn jemand seine vergessen hat.
 - **Farbe:** Jede Person bekommt automatisch eine eigene Farbe. Sie erscheint auf der Kachel bei **Wer ist dran?** (Streifen oben, Kreis mit den Initialen) und oben beim Namen — so findet man sich schneller. Ändern: unter Einstellungen → Benutzer auf den farbigen Kreis klicken (nur Admins).
+- **Funktion:** z. B. Entwicklungsingenieur, Konstrukteur, Projektleiter — aus der Vorschlagsliste oder frei eingetippt, auch gleich beim Anlegen. Sie steht auf der Kachel bei **Wer ist dran?**, in der Personenliste und bei den Zeiteinträgen. Ändern nur Admins; sehen dürfen sie alle.
+- **Stundensatz (CHF/h):** pro Person, für ihre Zeiten und die Entwicklungskosten im Datenblatt (siehe 6.14). Leer heisst: Es gilt der **Standard-Stundensatz** unter Belege & Preise. Sätze sehen und ändern nur Admins.
+- **⏱ Zeiten:** zeigt, für welche Projekte und Aufträge eine Person wie viel gearbeitet hat (nur Admins).
+  - Zeitraum: **Dieser Monat**, **Letzter Monat**, **Dieses Jahr**, **Letztes Jahr**, **Alles** oder ein eigenes Von–Bis.
+  - Oben Stunden, Kosten, Anzahl Projekte und Aufträge, verrechenbare Stunden; über mehrere Monate auch der **Verlauf** pro Monat.
+  - **Projekte (PLM):** Stunden, Anteil und Kosten pro Projekt. Ein Klick klappt die Teile auf, ein Klick auf ein Teil öffnet es.
+  - **Aufträge (ERP):** Stunden, davon verrechenbar, und Kosten. Ein Klick öffnet den Auftrag.
+  - Gelöschte Teile, Projekte und Aufträge bleiben drin, mit Nummer und Name von damals und dem Vermerk **gelöscht**.
+  - **Zeiten ohne Person anzeigen** (unter der Personenliste) zeigt Einträge, die keiner Person gehören — z. B. solche von vor der Personenzuordnung.
 - **Deaktivieren** statt löschen: Die Person bleibt in der Historie, steht aber nicht mehr zur Auswahl. Es braucht immer mindestens einen aktiven Admin.
 - **Rückmeldung (ab zwei Personen):** Das Sprechblasen-Symbol oben rechts meldet einen **Fehler** oder reicht eine **Idee** ein. Mitgeschickt werden Name, aktuelle Ansicht, geöffnetes Item, Version, Browser und die letzten Fehlermeldungen. Admins sehen offene Rückmeldungen oben auf dem **Dashboard**; ein Klick zeigt die Details, dort **✓ Erledigt** oder **Löschen**. **Liste →** zeigt alle, auch die erledigten — sind alle erledigt, steht dafür eine Zeile „Rückmeldungen: alle … erledigt · Liste →“ auf dem Dashboard.
 
@@ -1134,7 +1194,8 @@ Name, Adresse, UID, Bankverbindung — erscheinen auf Rechnungen, Angeboten, Lie
 **Logo hochladen…** (PNG, JPG, WebP, SVG) setzt das Logo auf diese Belege; ohne Logo steht der Firmenname.
 
 ### Belege & Preise
-- Standard-MwSt., Angebotsgültigkeit (Tage), Zahlungsbedingungen, Stundensatz (CHF/h) für die Arbeitszeit in Angeboten
+- Standard-MwSt., Angebotsgültigkeit (Tage), Zahlungsbedingungen
+- **Standard-Stundensatz (CHF/h)** — für die Arbeitszeit in Angeboten und Rechnungen und für alle Personen ohne eigenen Stundensatz (siehe Benutzer)
 - **Sprache der Belege** — für alle Belege und Etiketten, unabhängig von der Sprache der Oberfläche
 - **Fusszeilen** für Rechnung und Angebot
 
@@ -1182,6 +1243,10 @@ Gilt nur für diesen PC (steht in `plm.config`) und ist nur dort änderbar.
 **Vorsicht — Löschen ist endgültig.** Vorher unter **Sicherung & Export** sichern.
 
 In den Tabs **Items**, **Projekte**, **Aufträge**, **Produktion**: freigegebene oder gelieferte Items, Projekte mit Inhalt, abgeschlossene Aufträge, Produktionsaufträge.
+
+**Erfasste Zeiten bleiben:** Wird ein Item, ein Projekt oder ein Auftrag gelöscht — hier oder
+direkt —, löscht PLM die Zeiten nicht mit. Sie gelten als geleistete Arbeit und erscheinen unter
+**Benutzer → ⏱ Zeiten** mit Nummer und Name von damals, als **gelöscht** markiert.
 
 ---
 
@@ -1302,6 +1367,16 @@ Die heruntergeladene ZIP vor dem Entpacken freigeben: rechte Maustaste → **Eig
 **Zulassen** anhaken → OK, dann entpacken. Schon entpackt: einmal **Ausführen** bestätigen,
 danach warnt `START-PLM.bat` nicht mehr.
 
+**Im Datenblatt fehlen die Entwicklungskosten.**
+Sie erscheinen erst mit einem Stundensatz: bei der Person (**Einstellungen → Benutzer**) oder als
+**Standard-Stundensatz** (**Einstellungen → Belege & Preise**). Steht daneben „+ … ohne Satz“, fehlt
+für diese Stunden beides.
+
+**Ich habe den Stundensatz erhöht, die alten Kosten bleiben gleich.**
+So gewollt: Jede Zeit behält den Satz, der beim Erfassen galt (siehe 6.14). Der neue Satz gilt für
+neue Zeiten. Für einen einzelnen Eintrag: im Tab **Zeiten** mit ✏ eine andere Person wählen und
+wieder zurück — dann gilt der heutige Satz.
+
 **„Wer ist dran?“ erscheint jedes Mal.**
 Das ist so gewollt, sobald zwei oder mehr Personen angelegt sind. Allein arbeiten: die übrigen
 Personen unter Einstellungen → Benutzer deaktivieren.
@@ -1329,7 +1404,10 @@ Personen unter Einstellungen → Benutzer deaktivieren.
 | **Part** (PRT) | einzelnes Teil, auch „Bauteil“ |
 | **Dokument** (DOC) | Item, das nicht gefertigt wird, z. B. Zeichnung |
 | **Item-Nummer** | z. B. `0028-asm-001-prt-001` |
-| **Kurzcode** | kurzer Code zum Aufdrucken aufs Teil, z. B. `XHJ-1` (mit Revision) |
+| **Kurzcode** | kurzer Code zum Aufdrucken aufs Teil, z. B. `XHJ-1` (mit Revision); 3 bis 6 Zeichen (siehe 6.8) |
+| **Entwicklungszeit** / **Entwicklungskosten** | Summe der erfassten Zeiten eines Items samt Stückliste, mit dem Satz von damals (siehe 6.14) |
+| **Funktion** | Aufgabe einer Person, z. B. Konstrukteur |
+| **Standard-Stundensatz** | gilt für Angebote, Rechnungen und Personen ohne eigenen Satz |
 | **Revision** | Stand eines Items: `rev1`, `rev2` … Alte Revisionen bleiben erhalten |
 | **BOM** / Stückliste | Positionen einer Baugruppenrevision |
 | **Datei** | Datei an einer Revision (CAD, PDF, …) |

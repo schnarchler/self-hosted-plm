@@ -34,9 +34,9 @@ Everything under **Settings**:
 
 1. **Company** — name, address, bank details, logo, document language (for quotes, invoices,
    delivery notes)
-2. **Calculation** — hourly rate, VAT, payment terms
+2. **Calculation** — default hourly rate, VAT, payment terms
 3. **3D printing** — printers (with CHF/h) and nozzles
-4. **Users** — people with a role, if several people work with PLM
+4. **Users** — people with a role, function and their own hourly rate (for development costs)
 5. **Data → Checkout directory** — if you work with CAD; applies to this PC only
 6. **PLM → Release workflow** — **With release** (default) or **Without release**
 
