@@ -24,7 +24,7 @@ async function loadTimeEntries(orderId) {
       <tbody>${entries.map(e => `<tr>
         <td style="font-family:var(--mono);font-size:13px;color:var(--t3)">${fmtD(e.date)}${_teRangeLine(e)}</td>
         <td style="font-family:var(--mono);font-size:13px;font-weight:600">${_fmtDur(e.hours)}</td>
-        <td style="color:var(--t2)">${esc(e.description||'')}</td>
+        <td style="color:var(--t2)">${esc(e.description||'')}${_teUserLine(e)}</td>
         <td style="text-align:center"><span style="font-size:13px;padding:1px 7px;border-radius:10px;background:${e.billable?'rgba(110,222,156,.12)':'var(--bg2)'};color:${e.billable?'var(--green)':'var(--t3)'}">${e.billable?_t('Ja'):'—'}</span></td>
         <td style="display:flex;gap:4px">
           <button class="btn btn-ghost btn-sm btn-icon" onclick="openTimeModal(${JSON.stringify(e).replace(/"/g,'&quot;')})">✏</button>
@@ -101,6 +101,29 @@ function _teTimeValues(p) {
            start_time: both ? start : null, end_time: both ? end : null };
 }
 
+// Person des Eintrags: Auswahl erst, wenn es Personen gibt. Neu: wer gerade dran ist.
+function _teUserField(p, e) {
+  const users = state.session?.users || [];
+  if (!users.length) return '';
+  const sel = e.id ? e.user_id : state.session?.user?.id;
+  // Deaktivierte Person eines alten Eintrags bleibt wählbar
+  const extra = e.user_id && !users.some(u => u.id === e.user_id) ? [{ id: e.user_id, name: e.user_name || '?' }] : [];
+  return `<div class="fg"><label class="fl">${_t('Person')}</label>
+    <select id="${p}-user" class="fs">
+      <option value="">—</option>
+      ${[...users, ...extra].map(u => `<option value="${u.id}"${u.id === sel ? ' selected' : ''}>${esc(u.name)}</option>`).join('')}
+    </select></div>`;
+}
+function _teUserValue(p) {
+  const el = document.getElementById(`${p}-user`);
+  return el ? { user_id: el.value ? parseInt(el.value) : null } : {};
+}
+// Person in der Liste: Avatar mit Namen, sonst nichts
+function _teUserLine(e) {
+  return e.user_name
+    ? `<div style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--t3);margin-top:2px">${_avatar(e.user_name, 16, e.user_color)}${esc(e.user_name)}</div>` : '';
+}
+
 // Uhrzeiten unter dem Datum in der Liste, leer wenn nur die Dauer erfasst ist
 function _teRangeLine(e) {
   return e.start_time && e.end_time
@@ -119,6 +142,7 @@ function openTimeModal(entry) {
       ${_teTimeFields('te', e)}
       <div class="fg"><label class="fl">${_t('Beschreibung')}</label>
         <input id="te-desc" type="text" class="fi" placeholder="${_t('Konstruktion, Montage …')}" value="${esc(e.description||'')}"></div>
+      ${_teUserField('te', e)}
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;padding:6px 0;border-top:1px solid var(--line)">
         <input type="checkbox" id="te-billable" ${e.billable?'checked':''} style="width:15px;height:15px;cursor:pointer;accent-color:var(--blue)">
         <span style="color:var(--t2)">${_t('Zeit verrechnen')}</span>
@@ -140,9 +164,9 @@ async function saveTimeEntry(id) {
   if (!time.hours || time.hours <= 0) { toast(_t('Dauer (z.B. 1:30) oder Von und Bis eingeben'), 'err'); return; }
   try {
     if (id) {
-      await api(`/api/time-entries/${id}`, 'PUT', { date, ...time, description, billable });
+      await api(`/api/time-entries/${id}`, 'PUT', { date, ...time, description, billable, ..._teUserValue('te') });
     } else {
-      await api('/api/time-entries', 'POST', { order_id: _teOrderId, date, ...time, description, billable });
+      await api('/api/time-entries', 'POST', { order_id: _teOrderId, date, ...time, description, billable, ..._teUserValue('te') });
     }
     _hideDynModal();
     loadTimeEntries(_teOrderId);
@@ -298,7 +322,7 @@ async function loadItemTimeEntries(itemId) {
         ${entries.map(e => `<tr>
           <td style="font-family:var(--mono);font-size:13px">${fmtD(e.date)}${_teRangeLine(e)}</td>
           <td style="font-family:var(--mono);font-size:13px;white-space:nowrap">${_fmtDur(e.hours)}</td>
-          <td style="font-size:13px;color:var(--t2)">${esc(e.description||'—')}</td>
+          <td style="font-size:13px;color:var(--t2)">${esc(e.description||'—')}${_teUserLine(e)}</td>
           <td style="white-space:nowrap">
             <button class="btn btn-ghost btn-sm btn-icon" onclick="openItemTimeModal(${JSON.stringify(e).replace(/"/g,'&quot;')})">✏</button>
             <button class="btn btn-red btn-sm btn-icon" onclick="delItemTimeEntry(${e.id})">✕</button>
@@ -321,6 +345,7 @@ function openItemTimeModal(entry) {
       ${_teTimeFields('ite', e)}
       <div class="fg"><label class="fl">${_t('Beschreibung')}</label>
         <input id="ite-desc" type="text" class="fi" placeholder="${_t('Konstruktion, Recherche, CAD …')}" value="${esc(e.description||'')}"></div>
+      ${_teUserField('ite', e)}
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="_hideDynModal()">${_t('Abbrechen')}</button>
@@ -335,18 +360,30 @@ async function saveItemTimeEntry(id) {
   const description = document.getElementById('ite-desc').value.trim();
   if (!time.hours || time.hours <= 0) { toast(_t('Dauer (z.B. 1:30) oder Von und Bis eingeben'), 'err'); return; }
   if (id) {
-    await api(`/api/time-entries/${id}`, 'PUT', { date, ...time, description, billable: 0 });
+    await api(`/api/time-entries/${id}`, 'PUT', { date, ...time, description, billable: 0, ..._teUserValue('ite') });
   } else {
-    await api('/api/time-entries', 'POST', { item_id: _teItemId, date, ...time, description, billable: 0 });
+    await api('/api/time-entries', 'POST', { item_id: _teItemId, date, ...time, description, billable: 0, ..._teUserValue('ite') });
   }
   _hideDynModal();
-  loadItemTimeEntries(_teItemId);
+  await _refreshItemDevTime();
+}
+
+// Die Entwicklungszeit im Datenblatt kommt mit dem Item vom Server — nach einer
+// Änderung an den Zeiten das offene Item neu laden, damit sie nicht veraltet.
+async function _refreshItemDevTime() {
+  const itemId = _teItemId;
+  if (state.item?.id === itemId) {
+    state.item = await api('/api/items/' + itemId);
+    renderItemDetail(state.item, state.activeRevId);   // bleibt im Tab Zeiten, lädt die Liste neu
+  } else {
+    loadItemTimeEntries(itemId);
+  }
 }
 
 async function delItemTimeEntry(id) {
   if (!confirm(_t('Eintrag löschen?'))) return;
   await api(`/api/time-entries/${id}`, 'DELETE');
-  loadItemTimeEntries(_teItemId);
+  await _refreshItemDevTime();
 }
 
 // ── CHECKOUT ──────────────────────────────────────────────────
@@ -738,6 +775,8 @@ async function importCheckoutFiles(g) {
 }
 
 let _importProjects = [];
+// Letzte Wahl merken: neu angelegtes Item direkt öffnen oder in der Checkout-Liste bleiben
+function _impOpenPref() { try { return localStorage.getItem('plm.importOpen') !== '0'; } catch { return true; } }
 async function importNewItem(f) {
   window._importFile = f;
   _importProjects = await api('/api/projects').catch(() => []);
@@ -771,6 +810,10 @@ async function importNewItem(f) {
         <label style="font-size:13px;color:var(--t3);margin-bottom:4px;display:block">Name</label>
         <input id="imp-name" class="input" style="width:100%" value="${esc(suggestedName)}" placeholder="Name">
       </div>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;padding:6px 0;border-top:1px solid var(--line)">
+        <input type="checkbox" id="imp-open" ${_impOpenPref() ? 'checked' : ''} style="width:15px;height:15px;cursor:pointer;accent-color:var(--blue)">
+        <span style="color:var(--t2)">${_t('Nach dem Anlegen im PLM öffnen')}</span>
+      </label>
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="showCheckoutList()">${_t('Zurück')}</button>
@@ -786,6 +829,8 @@ async function _doImportNewItem() {
   const item_type  = document.getElementById('imp-type')?.value;
   const name       = document.getElementById('imp-name')?.value?.trim();
   if (!project_id || !item_type || !name) { toast(_t('Alle Felder ausfüllen'), 'err'); return; }
+  const openAfter = !!document.getElementById('imp-open')?.checked;
+  try { localStorage.setItem('plm.importOpen', openAfter ? '1' : '0'); } catch {}
   try {
     const r = await api('/api/checkout/import', 'POST', {
       mode: 'new',
@@ -793,8 +838,13 @@ async function _doImportNewItem() {
     });
     await loadCheckouts();
     toast(_t('Item {number} angelegt', { number: r.item_number }), 'ok');
-    showCheckoutList();
-    await refreshOpenProject(project_id);
+    if (openAfter && r.item_id) {
+      _hideDynModal();
+      await openProjectAndItem(r.project_id || project_id, r.item_id);
+    } else {
+      showCheckoutList();
+      await refreshOpenProject(project_id);
+    }
   } catch(e) { toast(_t('Fehler:') + ' ' + (e.message||''), 'err'); }
 }
 

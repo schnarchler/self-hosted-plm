@@ -183,6 +183,10 @@ function _usersPanel(users, s, admin) {
       <label class="user-color" title="${_t('Farbe ändern — erscheint auf der Kachel bei „Wer ist dran?“')}">${_avatar(u.name, 30, u.color)}
         <input type="color" value="${esc(u.color || '#9db4ff')}" onchange="_saveUser(${u.id}, { color: this.value })"></label>
       <input class="fi" style="flex:1;min-width:120px" value="${esc(u.name)}" onchange="_saveUser(${u.id}, { name: this.value })" aria-label="${_t('Name')}">
+      <span style="display:inline-flex;align-items:center;gap:4px;flex-shrink:0" title="${_t('Stundensatz dieser Person — leer: es gilt der Standard-Stundensatz')}">
+        <input class="fi" type="number" min="0" step="1" style="width:90px" value="${u.hourly_rate ?? ''}"
+          placeholder="${stdRate > 0 ? stdRate : _t('Satz')}" onchange="_saveUser(${u.id}, { hourly_rate: this.value })" aria-label="${_t('Stundensatz (CHF/h)')}">
+        <span style="font-size:12px;color:var(--t3)">CHF/h</span></span>
       ${mode === 'team' ? roleSelect(u) : roleChip(u)}
       ${mode === 'team' ? (u.has_pin
         ? `<button class="btn btn-ghost btn-sm" onclick="_setUserPin(${u.id})">${_t('PIN ändern')}</button>
@@ -192,6 +196,7 @@ function _usersPanel(users, s, admin) {
         ? `<span class="chip" title="${ONLY_ADMIN}">${_t('einziger Admin')}</span>`
         : `<button class="btn btn-ghost btn-sm" onclick="_saveUser(${u.id}, { active: false })" title="${_t('Bleibt in der Historie, steht aber nicht mehr zur Auswahl')}">${_t('Deaktivieren')}</button>`}
     </div>`;
+  const stdRate = parseFloat(state.settings?.hourly_rate) || 0;
   const readRow = u => `<div class="user-row">${_avatar(u.name, 30, u.color)}<span style="flex:1">${esc(u.name)}</span>${roleChip(u)}</div>`;
   const rows = active.map(admin ? editRow : readRow).join('');
   const noPin = mode === 'team' && admin && active.some(u => u.role === 'admin' && !u.has_pin);
@@ -201,7 +206,9 @@ function _usersPanel(users, s, admin) {
     ${!admin ? '<div class="st-notice">' + _t('Personen verwalten dürfen nur Admins.') + '</div>' : ''}
     ${noPin ? `<div class="st-notice">${_t('Ohne PIN kann jede Person die Admin-Kachel wählen — und damit auch Personen verwalten. Wer das verhindern will, setzt beim Admin eine PIN.')}</div>` : ''}
     ${rows ? `<div style="display:flex;flex-direction:column;gap:6px">${rows}</div>` : ''}
-    ${rows && admin ? '<div style="font-size:12px;color:var(--t4);margin-top:6px">' + _t('Klick auf den farbigen Kreis ändert die Farbe der Person.') + '</div>' : ''}
+    ${rows && admin ? '<div style="font-size:12px;color:var(--t4);margin-top:6px">' + _t('Klick auf den farbigen Kreis ändert die Farbe der Person.') + ' '
+      + _t('Der Stundensatz gilt für die Zeiten der Person und ergibt die Entwicklungskosten im Datenblatt; leer = Standard-Stundensatz ({rate}).',
+        { rate: stdRate > 0 ? fmtCHF(stdRate) + '/h' : _t('nicht gesetzt') }) + '</div>' : ''}
     ${admin ? `<div class="user-row" style="margin-top:${rows ? '12px' : '0'}">
       <input class="fi" id="st-user-new" style="flex:1;min-width:120px" placeholder="${mode === 'none' ? _t('Dein Name') : _t('Name der neuen Person')}"
         onkeydown="if(event.key==='Enter')_addUser()">

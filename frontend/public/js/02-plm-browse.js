@@ -896,6 +896,9 @@ function renderItemSheet(item, activeRevId) {
       [_t('Verkaufspreis'), priceVal != null ? fmtChf(priceVal) : null, false,
         btnEdit('openPriceModal', _t('Verkaufspreis dieser Revision ändern (ohne neue Revision)')) + bomPriceBtn],
       [_t('Entwicklungszeit'), _fmtHours(item.dev_hours)],
+      // Nur mit Stundensatz (Person oder Standard); Stunden ohne Satz als Hinweis
+      ...(item.dev_cost != null ? [[_t('Entwicklungskosten'), fmtChf(item.dev_cost), false,
+        item.dev_hours_unpriced > 0 ? ` <span style="font-size:12px;color:var(--amber)" title="${_t('Für diese Stunden ist weder bei der Person noch als Standard ein Stundensatz hinterlegt')}">${_t('+ {time} ohne Satz', { time: _fmtHours(item.dev_hours_unpriced) })}</span>` : '']] : []),
     ]],
   ]);
 
@@ -1478,8 +1481,10 @@ function renderBomList(rev, item, locked) {
   if (!plmRows.length && !stdRows.length)
     return '<div style="padding:12px;color:var(--t3);font-size:13px;text-align:center">' + _t('Noch keine Positionen') + '</div>';
 
-  const hourlyRate = parseFloat(state.settings?.hourly_rate) || 0;
   const totalDevHours = plmRows.reduce((s, b) => s + (b.dev_hours || 0), 0);
+  // Kosten je Position zum Satz der Person, die die Zeit erfasst hat (Server)
+  const totalDevCost = plmRows.some(b => b.dev_cost != null)
+    ? plmRows.reduce((s, b) => s + (b.dev_cost || 0), 0) : null;
 
   const plmHtml = plmRows.map((b, idx) => `
     <div class="bom-row${locked ? '' : ' bom-draggable'}" data-bom-id="${b.id}" data-rev-id="${rev.id}"${_thumbAttr(b.thumb_id)}
@@ -1531,7 +1536,7 @@ function renderBomList(rev, item, locked) {
     </div>` : '';
 
   const devSummary = totalDevHours > 0 ? (() => {
-    const cost = hourlyRate > 0 ? totalDevHours * hourlyRate : null;
+    const cost = totalDevCost;
     return `<div style="padding:7px 12px;border-top:1px solid var(--line);display:flex;align-items:center;gap:10px;font-size:13px;background:rgba(245,192,97,.05)">
       <span style="color:var(--amber)">⏱</span>
       <span style="color:var(--t3)">${_t('Entwicklungszeit Total:')}</span>

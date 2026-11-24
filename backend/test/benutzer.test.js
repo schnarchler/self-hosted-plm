@@ -187,6 +187,54 @@ test('Farben: jede Person bekommt eine eigene, der Admin kann sie ändern', asyn
   await ok(`/api/users/${ids.ben}`, { method: 'PUT', body: { color: ben0 }, cookie: anna });
 });
 
+test('Stundensatz pro Person: Zeiten tragen die Person, das Datenblatt rechnet die Entwicklungskosten', async () => {
+  const proj = (await ok('/api/projects', { method: 'POST', body: { name: 'Kosten' }, cookie: anna })).body;
+  const teil = (await ok(`/api/projects/${proj.id}/items`, { method: 'POST', body: { name: 'Halter', item_type: 'prt' }, cookie: anna })).body;
+  const item = () => ok(`/api/items/${teil.id}`, { cookie: anna }).then(r => r.body);
+
+  await ok('/api/time-entries', { method: 'POST', body: { item_id: teil.id, hours: 2 }, cookie: ben });
+  let it = await item();
+  assert.deepStrictEqual([it.dev_hours, it.dev_cost], [2, null], 'ohne Satz keine Kosten');
+
+  // Satz nur durch Admins, sehen nur Admins
+  assert.strictEqual((await req(`/api/users/${ids.ben}`, { method: 'PUT', body: { hourly_rate: 80 }, cookie: cleo })).status, 403);
+  assert.strictEqual((await req(`/api/users/${ids.ben}`, { method: 'PUT', body: { hourly_rate: 'viel' }, cookie: anna })).status, 400);
+  await ok(`/api/users/${ids.ben}`, { method: 'PUT', body: { hourly_rate: 80 }, cookie: anna });
+  assert.strictEqual((await ok('/api/users', { cookie: anna })).body.find(u => u.id === ids.ben).hourly_rate, 80);
+  assert.ok(!('hourly_rate' in (await ok('/api/users', { cookie: ben })).body[0]), 'nicht für User');
+
+  it = await item();
+  assert.deepStrictEqual([it.dev_cost, it.dev_hours_unpriced], [160, 0], 'Ben: 2 h × 80');
+  const entries = (await ok(`/api/time-entries?item_id=${teil.id}`, { cookie: anna })).body;
+  assert.strictEqual(entries[0].user_name, 'Ben', 'Person aus der Sitzung');
+
+  // Cleo ohne eigenen Satz: Standard-Stundensatz, sonst „ohne Satz“
+  const te = (await ok('/api/time-entries', { method: 'POST', body: { item_id: teil.id, hours: 1, user_id: ids.cleo }, cookie: anna })).body;
+  assert.strictEqual(te.user_id, ids.cleo, 'Person wählbar');
+  it = await item();
+  assert.deepStrictEqual([it.dev_hours, it.dev_cost, it.dev_hours_unpriced], [3, 160, 1]);
+  await ok('/api/settings', { method: 'PUT', body: { hourly_rate: '100' }, cookie: anna });
+  it = await item();
+  assert.deepStrictEqual([it.dev_cost, it.dev_hours_unpriced], [260, 0], '+ 1 h × Standard 100');
+
+  // Person ändern; ohne user_id bleibt sie beim Bearbeiten
+  await ok(`/api/time-entries/${te.id}`, { method: 'PUT', body: { date: '2026-11-01', hours: 1, user_id: ids.ben }, cookie: anna });
+  await ok(`/api/time-entries/${te.id}`, { method: 'PUT', body: { date: '2026-11-01', hours: 1 }, cookie: anna });
+  assert.strictEqual((await item()).dev_cost, 240, 'jetzt 3 h × 80');
+
+  // Baugruppe: Kosten der Teile in der Stückliste zählen mit
+  const bg = (await ok(`/api/projects/${proj.id}/items`, { method: 'POST', body: { name: 'Gestell', item_type: 'asm' }, cookie: anna })).body;
+  const bgRev = (await ok(`/api/items/${bg.id}`, { cookie: anna })).body.revisions[0];
+  await ok(`/api/revisions/${bgRev.id}/bom`, { method: 'POST', body: { child_item_id: teil.id, quantity: 1 }, cookie: anna });
+  const bgItem = (await ok(`/api/items/${bg.id}`, { cookie: anna })).body;
+  assert.strictEqual(bgItem.dev_cost, 240);
+  assert.strictEqual(bgItem.revisions[0].bom[0].dev_cost, 240);
+
+  await ok('/api/settings', { method: 'PUT', body: { hourly_rate: '' }, cookie: anna });
+  await ok(`/api/users/${ids.ben}`, { method: 'PUT', body: { hourly_rate: '' }, cookie: anna });
+  assert.strictEqual((await ok('/api/users', { cookie: anna })).body.find(u => u.id === ids.ben).hourly_rate, null, 'leer entfernt den Satz');
+});
+
 test('Rückmeldungen: jeder reicht ein, nur Admins sehen und erledigen sie', async () => {
   const sent = { kind: 'BUG', text: 'Dropdown abgeschnitten\nim Dialog',
     context: { view: 'Projekte', item: '003-prt-003 – Abdeckung', errors: ['GET /api/x → 500 kaputt'], pin_hash: 'nicht übernehmen' } };

@@ -196,7 +196,7 @@ async function renderSettings(page) {
           ${fi('default_tax_rate',_t('Standard MwSt. (%)'),s.default_tax_rate,'','number')}
           ${fi('quote_validity_days',_t('Angebot gültig (Tage)'),s.quote_validity_days,'','number')}
           ${fi('default_payment_terms',_t('Zahlungsbedingungen'),s.default_payment_terms,_t('30 Tage netto'))}
-          ${fi('hourly_rate',_t('Stundensatz (CHF/h)'),s.hourly_rate,'z.B. 120','number')}
+          ${fi('hourly_rate',_t('Standard-Stundensatz (CHF/h)'),s.hourly_rate,'z.B. 120','number')}
         </div>`)
       + _stCard(_t('Sprache der Belege'), _t('Für alle Belege und Etiketten, unabhängig von der Sprache der Oberfläche.'),
         `<select class="fs" id="st-doc_lang" style="max-width:240px">${Object.entries(LANGS).map(([code, name]) =>

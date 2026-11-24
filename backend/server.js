@@ -1068,6 +1068,8 @@ function applySchema() {
 
   // Add new columns to existing databases (safe try/catch)
   try { db.run('ALTER TABLE users ADD COLUMN color TEXT DEFAULT NULL'); } catch {}
+  // Stundensatz pro Person — leer: es gilt der Standard aus den Einstellungen
+  try { db.run('ALTER TABLE users ADD COLUMN hourly_rate REAL DEFAULT NULL'); } catch {}
   // Jede Person hat eine Farbe — bestehende bekommen der Reihe nach eine
   migrateOnce('user-colors-v1', () => {
     all('SELECT id FROM users WHERE color IS NULL ORDER BY id').forEach((u, i) =>
@@ -1139,6 +1141,8 @@ function applySchema() {
   // wurden. NULL = nur die Dauer wurde eingegeben.
   try { db.run('ALTER TABLE time_entries ADD COLUMN start_time TEXT DEFAULT NULL'); } catch {}
   try { db.run('ALTER TABLE time_entries ADD COLUMN end_time TEXT DEFAULT NULL'); } catch {}
+  // Wer die Zeit gearbeitet hat — für den Stundensatz der Person
+  try { db.run('ALTER TABLE time_entries ADD COLUMN user_id INTEGER DEFAULT NULL'); } catch {}
   // Füllmuster aus dem Slicer (gyroid, grid …). Für schon hochgeladene 3MF
   // einmalig nachtragen, damit es nicht erst nach einem neuen Upload erscheint.
   try { db.run('ALTER TABLE print_settings ADD COLUMN infill_pattern TEXT DEFAULT NULL'); } catch {}
@@ -1981,22 +1985,39 @@ function copyRevisionContent(from, toRevId, toRevLabel) {
 // UNION (nicht UNION ALL): dedupliziert die Baumzeilen und beendet die Rekursion
 // auch bei einem Stuecklisten-Zyklus. Am Ergebnis aendert das nichts, weil das
 // abschliessende IN ohnehin nur die Menge der item_id auswertet.
-function calcDevHours(itemId) {
-  const row = get(`
-    WITH RECURSIVE tree(item_id) AS (
-      SELECT ?
-      UNION
-      SELECT b.child_item_id
-      FROM bom b
-      JOIN tree t ON b.parent_rev_id = (
-        SELECT id FROM revisions WHERE item_id = t.item_id ORDER BY rowid DESC LIMIT 1
-      )
+// Das Item und alle Teile seiner Stückliste (jeweils die neueste Revision)
+const DEV_TREE_SQL = `WITH RECURSIVE tree(item_id) AS (
+    SELECT ?
+    UNION
+    SELECT b.child_item_id
+    FROM bom b
+    JOIN tree t ON b.parent_rev_id = (
+      SELECT id FROM revisions WHERE item_id = t.item_id ORDER BY rowid DESC LIMIT 1
     )
+  )`;
+function calcDevHours(itemId) {
+  const row = get(`${DEV_TREE_SQL}
     SELECT COALESCE(SUM(te.hours), 0) as total
     FROM time_entries te
     WHERE te.item_id IN (SELECT item_id FROM tree)
   `, [itemId]);
   return row?.total || 0;
+}
+// Entwicklungskosten: jede Stunde zum Satz der Person, die sie erfasst hat,
+// sonst zum Standard-Stundensatz. cost null = keine Stunde hat einen Satz.
+// unpriced_hours: Stunden, für die weder Person noch Standard einen Satz haben.
+function calcDevCost(itemId) {
+  const std = parseFloat(getSetting('hourly_rate', '0')) || 0;
+  const row = get(`${DEV_TREE_SQL}
+    SELECT
+      COALESCE(SUM(te.hours * COALESCE(NULLIF(u.hourly_rate, 0), NULLIF(?, 0))), 0) AS cost,
+      COALESCE(SUM(CASE WHEN COALESCE(NULLIF(u.hourly_rate, 0), NULLIF(?, 0)) IS NULL THEN te.hours ELSE 0 END), 0) AS unpriced,
+      COUNT(CASE WHEN COALESCE(NULLIF(u.hourly_rate, 0), NULLIF(?, 0)) IS NOT NULL THEN 1 END) AS priced
+    FROM time_entries te
+    LEFT JOIN users u ON u.id = te.user_id
+    WHERE te.item_id IN (SELECT item_id FROM tree)
+  `, [itemId, std, std, std]);
+  return { cost: row?.priced ? row.cost : null, unpriced_hours: row?.unpriced || 0 };
 }
 function calcManufacturingCost(revisionId) {
   if (!revisionId) return null;
@@ -2635,8 +2656,12 @@ app.put('/api/session/pin', (req, res) => {
 });
 
 app.get('/api/users', (req, res) => {
-  res.json(all(`SELECT id, name, role, color, active, created_at, last_seen_at, pin_hash IS NOT NULL AS has_pin
-    FROM users ORDER BY active DESC, name COLLATE NOCASE`));
+  const users = all(`SELECT id, name, role, color, active, created_at, last_seen_at, pin_hash IS NOT NULL AS has_pin, hourly_rate
+    FROM users ORDER BY active DESC, name COLLATE NOCASE`);
+  // Stundensätze sehen nur Admins (allein ist man Admin)
+  const admin = req.plmMode !== 'team' || req.plmUser?.role === 'admin';
+  if (!admin) users.forEach(u => delete u.hourly_rate);
+  res.json(users);
 });
 const cleanName = n => String(n ?? '').replace(/\s+/g, ' ').trim().slice(0, 40);
 const nameTaken = (name, exceptId) => all('SELECT id, name FROM users WHERE active=1')
@@ -2668,6 +2693,9 @@ app.put('/api/users/:id', (req, res) => {
   const active = b.active !== undefined ? (b.active ? 1 : 0) : u.active;
   const color = b.color !== undefined ? validColor(b.color) : u.color;
   if (b.color !== undefined && !color) return res.status(400).json({ error: 'Farbe als #rrggbb' });
+  const rateIn = b.hourly_rate === '' || b.hourly_rate == null ? null : parseFloat(b.hourly_rate);
+  if (b.hourly_rate !== undefined && rateIn !== null && !(rateIn >= 0)) return res.status(400).json({ error: 'Stundensatz als Zahl' });
+  const rate = b.hourly_rate !== undefined ? (rateIn || null) : u.hourly_rate;
   if (!name) return res.status(400).json({ error: 'Name fehlt' });
   if (!ROLES.includes(role)) return res.status(400).json({ error: 'Unbekannte Rolle' });
   if (active && nameTaken(name, u.id)) return res.status(400).json({ error: `„${name}" gibt es schon` });
@@ -2680,10 +2708,11 @@ app.put('/api/users/:id', (req, res) => {
     if (b.pin && !validPin(b.pin)) return res.status(400).json({ error: 'Die PIN braucht 4 bis 12 Zeichen' });
     pinHash = b.pin ? hashPin(String(b.pin)) : null;
   }
-  run('UPDATE users SET name=?, role=?, active=?, color=?, pin_hash=? WHERE id=?', [name, role, active, color, pinHash, u.id]);
+  run('UPDATE users SET name=?, role=?, active=?, color=?, pin_hash=?, hourly_rate=? WHERE id=?', [name, role, active, color, pinHash, rate, u.id]);
   if (!active) endSessionsOf(u.id);
   const changes = [name !== u.name && `Name ${u.name} → ${name}`, role !== u.role && `Rolle ${ROLE_LABEL[role]}`,
     active !== u.active && (active ? 'aktiviert' : 'deaktiviert'), color !== u.color && 'Farbe',
+    rate !== u.hourly_rate && (rate ? `Stundensatz ${rate}/h` : 'Stundensatz entfernt'),
     pinHash !== u.pin_hash && (pinHash ? 'PIN gesetzt' : 'PIN entfernt')]
     .filter(Boolean);
   if (changes.length) log('user', u.id, 'Person geändert', `${name}: ${changes.join(', ')}`);
@@ -2912,6 +2941,7 @@ app.get('/api/items/:id', (req, res) => {
         b.rev_outdated = !!(b.child_pinned_rev && b.child_active_rev
           && b.child_pinned_rev.id !== b.child_active_rev.id);
         b.dev_hours = calcDevHours(b.child_item_id);
+        b.dev_cost = calcDevCost(b.child_item_id).cost;
         // Gewicht und Preis der Revision, die in der Position steckt
         b.weight_g = b.child_pinned_rev
           ? revEffectiveWeight(b.child_pinned_rev, new Set([item.id]))
@@ -2946,6 +2976,7 @@ app.get('/api/items/:id', (req, res) => {
   item.delivered = item.revisions.some(r => r.delivered.length);
   // Fuer das Datenblatt: Entwicklungszeit (BOM-Rollup) und verknuepfter Lagerbestand
   item.dev_hours = calcDevHours(item.id);
+  { const dc = calcDevCost(item.id); item.dev_cost = dc.cost; item.dev_hours_unpriced = dc.unpriced_hours; }
   item.inventory = all(`SELECT id, name, sku, unit, stock_qty, min_qty, price_per_unit, notes
     FROM inventory_items WHERE item_id=? ORDER BY name`, [item.id]);
   // Offene Änderungsanträge, die dieses Teil betreffen
@@ -3392,7 +3423,7 @@ app.get('/api/revisions/:id', (req, res) => {
   rev.item = get('SELECT * FROM items WHERE id=?', [rev.item_id]);
   if (rev.item && rev.item.item_type === 'asm') {
     rev.bom = all('SELECT b.*, i.item_number, i.name, i.item_type, i.default_price FROM bom b JOIN items i ON b.child_item_id=i.id WHERE b.parent_rev_id=? ORDER BY b.position', [rev.id]);
-    rev.bom.forEach(b => { b.dev_hours = calcDevHours(b.child_item_id); });
+    rev.bom.forEach(b => { b.dev_hours = calcDevHours(b.child_item_id); b.dev_cost = calcDevCost(b.child_item_id).cost; });
   }
   res.json(rev);
 });
@@ -4175,7 +4206,7 @@ app.post('/api/checkout/import', (req, res) => {
       }
 
       log('item', itemId, 'Erstellt', `${item_type} ${item_number} via Checkout-Import`);
-      res.json({ success: true, item_number });
+      res.json({ success: true, item_number, item_id: itemId, project_id: project.id });
     } else {
       res.status(400).json({ error: 'Ungültiger Modus' });
     }
@@ -8520,9 +8551,11 @@ app.get('/api/raw-materials/:id/prices', (req, res) => {
 
 app.get('/api/time-entries', (req, res) => {
   const { order_id, item_id } = req.query;
-  if (item_id) return res.json(all('SELECT * FROM time_entries WHERE item_id=? ORDER BY date DESC, id DESC', [item_id]));
+  const sql = `SELECT te.*, u.name AS user_name, u.color AS user_color FROM time_entries te
+    LEFT JOIN users u ON u.id = te.user_id WHERE te.%s=? ORDER BY te.date DESC, te.id DESC`;
+  if (item_id) return res.json(all(sql.replace('%s', 'item_id'), [item_id]));
   if (!order_id) return res.status(400).json({ error: 'Auftrag oder Item fehlt' });
-  res.json(all('SELECT * FROM time_entries WHERE order_id=? ORDER BY date DESC, id DESC', [order_id]));
+  res.json(all(sql.replace('%s', 'order_id'), [order_id]));
 });
 
 // Von und Bis gelten nur zusammen und nur als HH:MM — sonst bleibt es bei der Dauer
@@ -8530,14 +8563,20 @@ function _timeRange({ start_time, end_time }) {
   const ok = t => typeof t === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(t);
   return ok(start_time) && ok(end_time) ? [start_time, end_time] : [null, null];
 }
+// Person des Eintrags: mitgeschickt (leer = niemand) oder wer gerade dran ist
+function _timeUser(req) {
+  if (!Object.prototype.hasOwnProperty.call(req.body, 'user_id')) return req.plmUser?.id ?? null;
+  const id = parseInt(req.body.user_id);
+  return id && get('SELECT id FROM users WHERE id=?', [id]) ? id : null;
+}
 
 app.post('/api/time-entries', (req, res) => {
   const { order_id, item_id, date, hours, description, billable } = req.body;
   if (!order_id && !item_id) return res.status(400).json({ error: 'Auftrag oder Item fehlt' });
   if (hours == null) return res.status(400).json({ error: 'Stunden fehlen' });
   const id = runGetId(
-    'INSERT INTO time_entries (order_id,item_id,date,hours,description,billable,start_time,end_time) VALUES (?,?,?,?,?,?,?,?)',
-    [order_id||null, item_id||null, date||new Date().toISOString().slice(0,10), parseFloat(hours), description||'', billable?1:0, ..._timeRange(req.body)]
+    'INSERT INTO time_entries (order_id,item_id,date,hours,description,billable,start_time,end_time,user_id) VALUES (?,?,?,?,?,?,?,?,?)',
+    [order_id||null, item_id||null, date||new Date().toISOString().slice(0,10), parseFloat(hours), description||'', billable?1:0, ..._timeRange(req.body), _timeUser(req)]
   );
   res.json(get('SELECT * FROM time_entries WHERE id=?', [id]));
 });
@@ -8546,6 +8585,9 @@ app.put('/api/time-entries/:id', (req, res) => {
   const { date, hours, description, billable } = req.body;
   run('UPDATE time_entries SET date=?,hours=?,description=?,billable=?,start_time=?,end_time=? WHERE id=?',
     [date, parseFloat(hours), description||'', billable?1:0, ..._timeRange(req.body), req.params.id]);
+  // Person nur ändern, wenn sie mitgeschickt wird
+  if (Object.prototype.hasOwnProperty.call(req.body, 'user_id'))
+    run('UPDATE time_entries SET user_id=? WHERE id=?', [_timeUser(req), req.params.id]);
   res.json(get('SELECT * FROM time_entries WHERE id=?', [req.params.id]));
 });
 

@@ -431,6 +431,7 @@ function generateItemTemplate(type, opts = {}) {
       [_d('Aussenmasse'), !dims.length ? null : dimsOne ? dims[0].txt : dims.map(d => d.name + ': ' + d.txt).join(' · '), !dimsOne],
       [_d('Verkaufspreis'), revPrice(item, rev) != null ? fmtChf(revPrice(item, rev)) : null],
       [_d('Entwicklungszeit'), _fmtHours(item.dev_hours)],
+      ...(item.dev_cost != null ? [[_d('Entwicklungskosten'), fmtChf(item.dev_cost)]] : []),
       [_d('Erstellt'), fmtDocD(item.created_at, null)],
       [_d('Quelle'), item.source_url, true],
     ]);
