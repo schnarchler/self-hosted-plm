@@ -1145,6 +1145,26 @@ function applySchema() {
   try { db.run('ALTER TABLE time_entries ADD COLUMN end_time TEXT DEFAULT NULL'); } catch {}
   // Wer die Zeit gearbeitet hat — für den Stundensatz der Person
   try { db.run('ALTER TABLE time_entries ADD COLUMN user_id INTEGER DEFAULT NULL'); } catch {}
+  // Stundensatz beim Erfassen festgehalten — spätere Änderungen am Satz der
+  // Person gelten nur für neue Zeiten. NULL = beim Erfassen gab es keinen Satz.
+  try { db.run('ALTER TABLE time_entries ADD COLUMN hourly_rate REAL DEFAULT NULL'); } catch {}
+  // Gelöschtes Teil, Projekt oder Auftrag: die Zeiten bleiben (geleistete Arbeit),
+  // mit Nummer und Name von damals. deleted_at gesetzt = gehört zu Gelöschtem.
+  try { db.run('ALTER TABLE time_entries ADD COLUMN deleted_at TEXT DEFAULT NULL'); } catch {}
+  try { db.run('ALTER TABLE time_entries ADD COLUMN deleted_label TEXT DEFAULT NULL'); } catch {}
+  try { db.run('ALTER TABLE time_entries ADD COLUMN deleted_project_id INTEGER DEFAULT NULL'); } catch {}
+  try { db.run('ALTER TABLE time_entries ADD COLUMN deleted_project_label TEXT DEFAULT NULL'); } catch {}
+  // Schon früher verwaiste Zeiten: als gelöscht markieren, die Namen sind nicht mehr bekannt
+  migrateOnce('time-entries-orphans-v1', () => {
+    db.run(`UPDATE time_entries SET deleted_at=datetime('now') WHERE deleted_at IS NULL AND (
+      (item_id IS NOT NULL AND item_id NOT IN (SELECT id FROM items)) OR
+      (item_id IS NULL AND order_id IS NOT NULL AND order_id NOT IN (SELECT id FROM orders)))`);
+  });
+  // Bestehende Zeiten: einmalig der heutige Satz ihrer Person bzw. der Standard
+  migrateOnce('time-entry-rates-v1', () => {
+    all('SELECT id, user_id FROM time_entries WHERE hourly_rate IS NULL').forEach(te =>
+      db.run('UPDATE time_entries SET hourly_rate=? WHERE id=?', [rateForUser(te.user_id), te.id]));
+  });
   // Füllmuster aus dem Slicer (gyroid, grid …). Für schon hochgeladene 3MF
   // einmalig nachtragen, damit es nicht erst nach einem neuen Upload erscheint.
   try { db.run('ALTER TABLE print_settings ADD COLUMN infill_pattern TEXT DEFAULT NULL'); } catch {}
@@ -2005,21 +2025,61 @@ function calcDevHours(itemId) {
   `, [itemId]);
   return row?.total || 0;
 }
-// Entwicklungskosten: jede Stunde zum Satz der Person, die sie erfasst hat,
-// sonst zum Standard-Stundensatz. cost null = keine Stunde hat einen Satz.
-// unpriced_hours: Stunden, für die weder Person noch Standard einen Satz haben.
-function calcDevCost(itemId) {
+// Vor dem Löschen: Zeiten behalten, mit Nummer und Name von Teil/Projekt bzw. Auftrag
+function keepTimeOfItem(itemId) {
+  const i = get(`SELECT i.item_number, i.name, i.project_id, p.number AS pn, p.name AS pname
+    FROM items i LEFT JOIN projects p ON p.id = i.project_id WHERE i.id=?`, [itemId]);
+  if (!i) return;
+  run(`UPDATE time_entries SET deleted_at=datetime('now'), deleted_label=?, deleted_project_id=?, deleted_project_label=?
+    WHERE item_id=? AND deleted_at IS NULL`,
+    [`${i.item_number} – ${i.name}`, i.project_id, i.pn ? `${i.pn} · ${i.pname}` : null, itemId]);
+}
+function keepTimeOfOrder(orderId) {
+  const o = get('SELECT number, title FROM orders WHERE id=?', [orderId]);
+  if (!o) return;
+  run(`UPDATE time_entries SET deleted_at=datetime('now'), deleted_label=? WHERE order_id=? AND deleted_at IS NULL`,
+    [`${o.number} – ${o.title}`, orderId]);
+}
+// Satz, der für eine neue Zeit dieser Person gilt: ihr eigener, sonst der Standard
+function rateForUser(userId) {
+  const own = userId ? get('SELECT hourly_rate FROM users WHERE id=?', [userId])?.hourly_rate : null;
+  if (own > 0) return own;
   const std = parseFloat(getSetting('hourly_rate', '0')) || 0;
+  return std > 0 ? std : null;
+}
+// Satz eines Zeiteintrags (te, u = users): der beim Erfassen festgehaltene.
+// Gab es damals keinen, gilt der heutige der Person bzw. der Standard.
+function teRateSql() {
+  const std = parseFloat(getSetting('hourly_rate', '0')) || 0;
+  return `COALESCE(NULLIF(te.hourly_rate, 0), NULLIF(u.hourly_rate, 0), NULLIF(${Number(std) || 0}, 0))`;
+}
+// Entwicklungskosten des Items samt Stückliste. cost null = keine Stunde hat einen Satz.
+// unpriced_hours: Stunden ganz ohne Satz.
+function calcDevCost(itemId) {
+  const rate = teRateSql();
   const row = get(`${DEV_TREE_SQL}
-    SELECT
-      COALESCE(SUM(te.hours * COALESCE(NULLIF(u.hourly_rate, 0), NULLIF(?, 0))), 0) AS cost,
-      COALESCE(SUM(CASE WHEN COALESCE(NULLIF(u.hourly_rate, 0), NULLIF(?, 0)) IS NULL THEN te.hours ELSE 0 END), 0) AS unpriced,
-      COUNT(CASE WHEN COALESCE(NULLIF(u.hourly_rate, 0), NULLIF(?, 0)) IS NOT NULL THEN 1 END) AS priced
+    SELECT SUM(CASE WHEN ${rate} IS NOT NULL THEN te.hours * ${rate} END) AS cost,
+      COALESCE(SUM(CASE WHEN ${rate} IS NULL THEN te.hours ELSE 0 END), 0) AS unpriced
     FROM time_entries te
     LEFT JOIN users u ON u.id = te.user_id
     WHERE te.item_id IN (SELECT item_id FROM tree)
-  `, [itemId, std, std, std]);
-  return { cost: row?.priced ? row.cost : null, unpriced_hours: row?.unpriced || 0 };
+  `, [itemId]);
+  return { cost: row?.cost ?? null, unpriced_hours: row?.unpriced || 0 };
+}
+// Wer wie lange am Item (samt Stückliste) gearbeitet hat — für die Übersicht unter Zeiten
+function devTimeByUser(itemId) {
+  const rate = teRateSql();
+  return all(`${DEV_TREE_SQL}
+    SELECT te.user_id, u.name AS user_name, u.color AS user_color, u.job_title AS user_job_title,
+      SUM(te.hours) AS hours,
+      SUM(CASE WHEN te.item_id = ? THEN te.hours ELSE 0 END) AS own_hours,
+      SUM(CASE WHEN ${rate} IS NOT NULL THEN te.hours * ${rate} END) AS cost,
+      COALESCE(SUM(CASE WHEN ${rate} IS NULL THEN te.hours ELSE 0 END), 0) AS unpriced_hours
+    FROM time_entries te
+    LEFT JOIN users u ON u.id = te.user_id
+    WHERE te.item_id IN (SELECT item_id FROM tree)
+    GROUP BY te.user_id
+    ORDER BY hours DESC`, [itemId, itemId]);
 }
 function calcManufacturingCost(revisionId) {
   if (!revisionId) return null;
@@ -2581,7 +2641,8 @@ const ADMIN_ONLY = [
   /^DELETE \/api\/(projects|items|customers|suppliers)\/\d+$/,
 ];
 // Lesen nur für Admins: ganze Datenbank, Sicherungen, Dateiablage auf der Platte
-const ADMIN_READ = [/^GET \/api\/(export|export-named|backups|file-index|feedback)$/, /^GET \/api\/backups\/[^/]+\/download$/];
+const ADMIN_READ = [/^GET \/api\/(export|export-named|backups|file-index|feedback)$/, /^GET \/api\/backups\/[^/]+\/download$/,
+  /^GET \/api\/users\/(\d+|none)\/time-report$/];
 function requiredRole(req) {
   const key = req.method + ' ' + req.path;
   if (ADMIN_READ.some(r => r.test(key))) return 'admin';
@@ -2844,6 +2905,7 @@ app.delete('/api/projects/:id', (req, res) => {
     });
     const itemIds = all('SELECT id FROM items WHERE project_id=?', [p.id]);
     itemIds.forEach(i => {
+      keepTimeOfItem(i.id);
       run('DELETE FROM revisions WHERE item_id=?', [i.id]);
       run('DELETE FROM changelog WHERE entity_type=? AND entity_id=?', ['item', i.id]);
     });
@@ -3408,6 +3470,7 @@ app.delete('/api/items/:id', (req, res) => {
       run('DELETE FROM bom WHERE parent_rev_id=?', [rev.id]);
       run('DELETE FROM print_settings WHERE revision_id=?', [rev.id]);
     });
+    keepTimeOfItem(item.id);
     run('DELETE FROM revisions WHERE item_id=?', [item.id]);
     run('DELETE FROM bom WHERE child_item_id=?', [item.id]);
     run('DELETE FROM changelog WHERE entity_type=? AND entity_id=?', ['item', item.id]);
@@ -5091,6 +5154,7 @@ app.delete('/api/orders/:id', (req, res) => {
   const o = get('SELECT * FROM orders WHERE id=?', [req.params.id]);
   if (o) log('order', o.id, 'Gelöscht', _histDoc(o));
   tx(() => {
+    keepTimeOfOrder(req.params.id);
     run('DELETE FROM order_items WHERE order_id=?', [req.params.id]);
     run('DELETE FROM orders WHERE id=?', [req.params.id]);
   });
@@ -8554,13 +8618,93 @@ app.get('/api/raw-materials/:id/prices', (req, res) => {
   res.json(distinct);
 });
 
+// Stundensätze und Kosten sehen nur Admins (allein ist man Admin)
+const seesRates = req => req.plmMode !== 'team' || req.plmUser?.role === 'admin';
+function hideRates(req, rows) {
+  if (!seesRates(req)) rows.forEach(r => { delete r.hourly_rate; delete r.rate; delete r.cost; });
+  return rows;
+}
 app.get('/api/time-entries', (req, res) => {
   const { order_id, item_id } = req.query;
-  const sql = `SELECT te.*, u.name AS user_name, u.color AS user_color, u.job_title AS user_job_title FROM time_entries te
-    LEFT JOIN users u ON u.id = te.user_id WHERE te.%s=? ORDER BY te.date DESC, te.id DESC`;
-  if (item_id) return res.json(all(sql.replace('%s', 'item_id'), [item_id]));
-  if (!order_id) return res.status(400).json({ error: 'Auftrag oder Item fehlt' });
-  res.json(all(sql.replace('%s', 'order_id'), [order_id]));
+  const col = item_id ? 'item_id' : order_id ? 'order_id' : null;
+  if (!col) return res.status(400).json({ error: 'Auftrag oder Item fehlt' });
+  const sql = `SELECT te.*, ${teRateSql()} AS rate, u.name AS user_name, u.color AS user_color, u.job_title AS user_job_title
+    FROM time_entries te LEFT JOIN users u ON u.id = te.user_id WHERE te.${col}=? AND te.deleted_at IS NULL ORDER BY te.date DESC, te.id DESC`;
+  res.json(hideRates(req, all(sql, [item_id || order_id])));
+});
+// Zeiten einer Person (oder „none“: ohne Person) nach Projekt und Teil bzw.
+// Auftrag, optional im Zeitraum from..to (YYYY-MM-DD). Nur für Admins (ADMIN_READ).
+app.get('/api/users/:id/time-report', (req, res) => {
+  const none = req.params.id === 'none';
+  const user = none ? null : get('SELECT id, name, color, job_title, hourly_rate FROM users WHERE id=?', [req.params.id]);
+  if (!none && !user) return res.status(404).json({ error: 'Nicht gefunden' });
+  const day = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : null;
+  const from = day(req.query.from), to = day(req.query.to);
+  const where = [none ? 'te.user_id IS NULL' : 'te.user_id = ?'], params = none ? [] : [user.id];
+  if (from) { where.push('te.date >= ?'); params.push(from); }
+  if (to) { where.push('te.date <= ?'); params.push(to); }
+  const rows = all(`SELECT te.id, te.date, te.hours, te.billable, te.description, ${teRateSql()} AS rate,
+      te.item_id, i.item_number, i.name AS item_name, i.item_type,
+      p.id AS project_id, p.number AS project_number, p.name AS project_name, p.color AS project_color,
+      te.order_id, o.number AS order_number, o.title AS order_title,
+      te.deleted_at, te.deleted_label, te.deleted_project_id, te.deleted_project_label
+    FROM time_entries te
+    LEFT JOIN users u ON u.id = te.user_id
+    LEFT JOIN items i ON i.id = te.item_id AND te.deleted_at IS NULL
+    LEFT JOIN orders o ON o.id = te.order_id AND te.deleted_at IS NULL
+    -- Gelöschtes Teil in einem Projekt, das es noch gibt: dort einordnen
+    LEFT JOIN projects p ON p.id = COALESCE(i.project_id, te.deleted_project_id)
+    WHERE ${where.join(' AND ')}
+    ORDER BY te.date DESC, te.id DESC`, params);
+
+  // Summen: Stunden, Kosten (nur Stunden mit Satz), Stunden ohne Satz
+  const acc = (o, r) => {
+    o.hours += r.hours || 0;
+    if (r.rate != null) o.cost = (o.cost || 0) + (r.hours || 0) * r.rate; else o.unpriced_hours += r.hours || 0;
+    o.entries = (o.entries || 0) + 1;
+    if (!o.last || r.date > o.last) o.last = r.date;
+    return o;
+  };
+  const blank = extra => ({ hours: 0, cost: null, unpriced_hours: 0, ...extra });
+  const projects = new Map(), orders = new Map(), total = blank({ billable_hours: 0 });
+  for (const r of rows) {
+    acc(total, r);
+    if (r.billable) total.billable_hours += r.hours || 0;
+    const gone = !!r.deleted_at;
+    if (r.item_id) {
+      // Projekt gibt es noch (auch bei gelöschtem Teil) oder es ist mitgelöscht
+      const pk = r.project_id != null ? 'p' + r.project_id : 'dp' + (r.deleted_project_id ?? '') + ':' + (r.deleted_project_label ?? '');
+      if (!projects.has(pk)) projects.set(pk, blank(r.project_id != null
+        ? { id: r.project_id, number: r.project_number, name: r.project_name, color: r.project_color, items: new Map() }
+        : { id: null, number: null, name: r.deleted_project_label, deleted: true, items: new Map() }));
+      const p = acc(projects.get(pk), r);
+      const ik = (gone ? 'd' : '') + r.item_id;
+      if (!p.items.has(ik)) p.items.set(ik, blank(gone
+        ? { id: null, item_number: null, name: r.deleted_label, deleted: true }
+        : { id: r.item_id, item_number: r.item_number, name: r.item_name, item_type: r.item_type }));
+      acc(p.items.get(ik), r);
+    } else if (r.order_id) {
+      const ok = (gone ? 'd' : '') + r.order_id;
+      if (!orders.has(ok)) orders.set(ok, blank(gone
+        ? { id: null, number: null, title: r.deleted_label, deleted: true, billable_hours: 0 }
+        : { id: r.order_id, number: r.order_number, title: r.order_title, billable_hours: 0 }));
+      const o = acc(orders.get(ok), r);
+      if (r.billable) o.billable_hours += r.hours || 0;
+    }
+  }
+  const byHours = (a, b) => b.hours - a.hours;
+  res.json({
+    user: user ? publicUser(user) : null, hourly_rate: user?.hourly_rate ?? null, from, to, total,
+    projects: [...projects.values()].map(p => ({ ...p, items: [...p.items.values()].sort(byHours) })).sort(byHours),
+    orders: [...orders.values()].sort(byHours),
+    // Monate für die Verlaufsleiste (YYYY-MM → Stunden)
+    months: Object.entries(rows.reduce((m, r) => { const k = String(r.date || '').slice(0, 7); if (k) m[k] = (m[k] || 0) + (r.hours || 0); return m; }, {}))
+      .sort(([a], [b]) => a.localeCompare(b)).map(([month, hours]) => ({ month, hours })),
+  });
+});
+app.get('/api/items/:id/time-summary', (req, res) => {
+  if (!get('SELECT id FROM items WHERE id=?', [req.params.id])) return res.status(404).json({ error: 'Nicht gefunden' });
+  res.json(hideRates(req, devTimeByUser(Number(req.params.id))));
 });
 
 // Von und Bis gelten nur zusammen und nur als HH:MM — sonst bleibt es bei der Dauer
@@ -8579,21 +8723,28 @@ app.post('/api/time-entries', (req, res) => {
   const { order_id, item_id, date, hours, description, billable } = req.body;
   if (!order_id && !item_id) return res.status(400).json({ error: 'Auftrag oder Item fehlt' });
   if (hours == null) return res.status(400).json({ error: 'Stunden fehlen' });
+  const userId = _timeUser(req);   // Satz dieser Person wird mit dem Eintrag festgehalten
   const id = runGetId(
-    'INSERT INTO time_entries (order_id,item_id,date,hours,description,billable,start_time,end_time,user_id) VALUES (?,?,?,?,?,?,?,?,?)',
-    [order_id||null, item_id||null, date||new Date().toISOString().slice(0,10), parseFloat(hours), description||'', billable?1:0, ..._timeRange(req.body), _timeUser(req)]
+    'INSERT INTO time_entries (order_id,item_id,date,hours,description,billable,start_time,end_time,user_id,hourly_rate) VALUES (?,?,?,?,?,?,?,?,?,?)',
+    [order_id||null, item_id||null, date||new Date().toISOString().slice(0,10), parseFloat(hours), description||'', billable?1:0, ..._timeRange(req.body),
+     userId, rateForUser(userId)]
   );
-  res.json(get('SELECT * FROM time_entries WHERE id=?', [id]));
+  res.json(hideRates(req, [get('SELECT * FROM time_entries WHERE id=?', [id])])[0]);
 });
 
 app.put('/api/time-entries/:id', (req, res) => {
   const { date, hours, description, billable } = req.body;
   run('UPDATE time_entries SET date=?,hours=?,description=?,billable=?,start_time=?,end_time=? WHERE id=?',
     [date, parseFloat(hours), description||'', billable?1:0, ..._timeRange(req.body), req.params.id]);
-  // Person nur ändern, wenn sie mitgeschickt wird
-  if (Object.prototype.hasOwnProperty.call(req.body, 'user_id'))
-    run('UPDATE time_entries SET user_id=? WHERE id=?', [_timeUser(req), req.params.id]);
-  res.json(get('SELECT * FROM time_entries WHERE id=?', [req.params.id]));
+  // Person nur ändern, wenn sie mitgeschickt wird. Andere Person: deren heutiger
+  // Satz. Gleiche Person: der festgehaltene Satz bleibt.
+  if (Object.prototype.hasOwnProperty.call(req.body, 'user_id')) {
+    const before = get('SELECT user_id FROM time_entries WHERE id=?', [req.params.id]);
+    const userId = _timeUser(req);
+    if (before && (before.user_id ?? null) !== userId)
+      run('UPDATE time_entries SET user_id=?, hourly_rate=? WHERE id=?', [userId, rateForUser(userId), req.params.id]);
+  }
+  res.json(hideRates(req, [get('SELECT * FROM time_entries WHERE id=?', [req.params.id])])[0]);
 });
 
 app.delete('/api/time-entries/:id', (req, res) => {

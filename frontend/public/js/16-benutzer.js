@@ -202,6 +202,7 @@ function _usersPanel(users, s, admin) {
           placeholder="${stdRate > 0 ? stdRate : _t('Satz')}" onchange="_saveUser(${u.id}, { hourly_rate: this.value })" aria-label="${_t('Stundensatz (CHF/h)')}">
         <span style="font-size:12px;color:var(--t3)">CHF/h</span></span>
       ${mode === 'team' ? roleSelect(u) : roleChip(u)}
+      <button class="btn btn-ghost btn-sm" onclick="openUserTimeReport(${u.id})" title="${_t('Für welche Projekte und Aufträge diese Person wie viel gearbeitet hat')}">${_t('⏱ Zeiten')}</button>
       ${mode === 'team' ? (u.has_pin
         ? `<button class="btn btn-ghost btn-sm" onclick="_setUserPin(${u.id})">${_t('PIN ändern')}</button>
            <button class="btn btn-ghost btn-sm" onclick="_saveUser(${u.id}, { pin: null })">${_t('PIN entfernen')}</button>`
@@ -224,6 +225,7 @@ function _usersPanel(users, s, admin) {
     ${rows && admin ? '<div style="font-size:12px;color:var(--t4);margin-top:6px">' + _t('Klick auf den farbigen Kreis ändert die Farbe der Person.') + ' '
       + _t('Der Stundensatz gilt für die Zeiten der Person und ergibt die Entwicklungskosten im Datenblatt; leer = Standard-Stundensatz ({rate}).',
         { rate: stdRate > 0 ? fmtCHF(stdRate) + '/h' : _t('nicht gesetzt') }) + '</div>' : ''}
+    ${admin && rows ? `<div style="font-size:12px;margin-top:4px"><a href="#" onclick="event.preventDefault();openUserTimeReport('none')" style="color:var(--t3)">${_t('Zeiten ohne Person anzeigen')}</a></div>` : ''}
     ${admin ? `<div class="user-row" style="margin-top:${rows ? '12px' : '0'}">
       <input class="fi" id="st-user-new" style="flex:1;min-width:120px" placeholder="${mode === 'none' ? _t('Dein Name') : _t('Name der neuen Person')}"
         onkeydown="if(event.key==='Enter')_addUser()">
@@ -310,4 +312,128 @@ async function _addUser() {
 async function _saveIdleMinutes(v) {
   try { await api('/api/settings', 'PUT', { user_idle_minutes: String(Math.max(0, parseFloat(v) || 0)) }); toast(_t('Gespeichert'), 'ok'); } catch {}
   await loadSession();
+}
+
+
+// ── ZEITEN EINER PERSON ───────────────────────────────────────
+// Für welche Projekte (und Teile) und Aufträge jemand wie viel gearbeitet hat.
+// Nur für Admins; Kosten zum beim Erfassen festgehaltenen Satz.
+let _tr = { id: null, preset: 'year', from: '', to: '', open: new Set() };
+const _ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+function _trRange(preset) {
+  const n = new Date(), y = n.getFullYear(), m = n.getMonth();
+  return {
+    month: [new Date(y, m, 1), new Date(y, m + 1, 0)],
+    lastmonth: [new Date(y, m - 1, 1), new Date(y, m, 0)],
+    year: [new Date(y, 0, 1), new Date(y, 11, 31)],
+    lastyear: [new Date(y - 1, 0, 1), new Date(y - 1, 11, 31)],
+    all: [null, null],
+  }[preset]?.map(d => d ? _ymd(d) : '') || [_tr.from, _tr.to];
+}
+async function openUserTimeReport(id) {
+  _tr = { id, preset: 'year', from: '', to: '', open: new Set() };
+  [_tr.from, _tr.to] = _trRange('year');
+  await _trLoad();
+}
+function _trPreset(p) { _tr.preset = p; [_tr.from, _tr.to] = _trRange(p); _tr.open.clear(); _trLoad(); }
+function _trDates() { _tr.preset = 'custom'; _tr.from = V('tr-from'); _tr.to = V('tr-to'); _trLoad(); }
+function _trToggle(key) { _tr.open.has(key) ? _tr.open.delete(key) : _tr.open.add(key); _trLoad(true); }
+let _trData = null;
+async function _trLoad(cached) {
+  if (!cached || !_trData) {
+    const q = new URLSearchParams({ ...(_tr.from && { from: _tr.from }), ...(_tr.to && { to: _tr.to }) });
+    try { _trData = await api(`/api/users/${_tr.id}/time-report?${q}`); } catch { return; }
+  }
+  const scroll = document.querySelector('#dynModal .modal-body')?.scrollTop;
+  _showDynModal(_trHtml(_trData));
+  if (cached && scroll) document.querySelector('#dynModal .modal-body').scrollTop = scroll;
+}
+
+function _trHtml(d) {
+  const u = d.user, t = d.total;
+  const num = 'font-family:var(--mono);font-size:13px;text-align:right;white-space:nowrap';
+  const cost = o => o.cost != null ? fmtCHF(o.cost) : '<span style="color:var(--t4)">—</span>';
+  const bar = (h, color) => {
+    const pct = t.hours > 0 ? Math.round(h / t.hours * 100) : 0;
+    return `<div style="display:flex;align-items:center;gap:8px;min-width:100px">
+      <div style="flex:1;height:6px;border-radius:3px;background:var(--bg3);overflow:hidden">
+        <div style="width:${pct}%;height:100%;background:${/^#[0-9a-f]{6}$/i.test(color || '') ? color : 'var(--blue)'}"></div></div>
+      <span style="font-size:12px;color:var(--t3);width:34px;text-align:right">${pct}%</span></div>`;
+  };
+  const presets = [['month', _t('Dieser Monat')], ['lastmonth', _t('Letzter Monat')], ['year', _t('Dieses Jahr')],
+    ['lastyear', _t('Letztes Jahr')], ['all', _t('Alles')]];
+  const tile = (label, val, sub = '') => `<div style="flex:1;min-width:120px;background:var(--bg2);border:1px solid var(--line);border-radius:var(--r-sm);padding:10px 12px">
+    <div style="font-size:11px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em">${label}</div>
+    <div style="font-size:18px;font-weight:600;font-family:var(--mono);margin-top:2px">${val}</div>
+    ${sub ? `<div style="font-size:12px;color:var(--t4)">${sub}</div>` : ''}</div>`;
+
+  // Gelöschtes bleibt mit Nummer und Name von damals, ohne Link
+  const gone = `<span class="chip" style="margin-left:6px;color:var(--red);border-color:rgba(255,120,120,.35)" title="${_t('Gelöscht — die Zeiten bleiben als geleistete Arbeit erhalten')}">${_t('gelöscht')}</span>`;
+  const projRows = d.projects.map((p, idx) => {
+    const key = 'p' + idx, open = _tr.open.has(key);
+    return `<tr style="cursor:pointer" onclick="_trToggle('${key}')">
+        <td><span style="color:var(--t4);display:inline-block;width:12px">${open ? '▾' : '▸'}</span>
+          ${p.color ? `<span style="width:9px;height:9px;border-radius:50%;background:${esc(p.color)};display:inline-block;margin-right:4px"></span>` : ''}
+          <span style="font-family:var(--mono);font-size:12px;color:var(--t3)">${esc(p.number || '')}</span> ${esc(p.name || (p.deleted ? _t('Gelöschtes Projekt') : _t('Ohne Projekt')))}${p.deleted ? gone : ''}
+          <span style="font-size:12px;color:var(--t4)">· ${_t('{n} Teile', { n: p.items.length })}</span></td>
+        <td style="${num}">${_fmtDur(p.hours)}</td><td>${bar(p.hours, p.color)}</td><td style="${num}">${cost(p)}</td>
+      </tr>${open ? p.items.map(i => `<tr style="background:var(--bg2)">
+        <td style="padding-left:34px">${i.deleted
+          ? `<span style="font-size:13px;color:var(--t3)">${esc(i.name || _t('Gelöschtes Teil'))}</span>${gone}`
+          : `<span style="display:inline-flex;align-items:center;gap:6px;cursor:pointer" onclick="_hideDynModal();gotoPlmItem(${i.id})" title="${_t('Item öffnen')}">
+          ${_itemChip(i.item_type, 14)}<span style="font-family:var(--mono);font-size:12px;color:var(--blue)">${esc(i.item_number)}</span>
+          <span style="font-size:13px">${esc(i.name)}</span></span>`}
+          <span style="font-size:12px;color:var(--t4)">· ${_t('zuletzt {date}', { date: fmtD(i.last) })}</span></td>
+        <td style="${num}">${_fmtDur(i.hours)}</td><td></td><td style="${num}">${cost(i)}</td></tr>`).join('') : ''}`;
+  }).join('');
+
+  const orderRows = d.orders.map(o => `<tr${o.deleted ? '' : ` style="cursor:pointer" onclick="_hideDynModal();gotoView('orders');openOrderDetail(${o.id})" title="${_t('Auftrag öffnen')}"`}>
+      <td>${o.deleted
+        ? `<span style="color:var(--t3)">${esc(o.title || _t('Gelöschter Auftrag'))}</span>${gone}`
+        : `<span style="font-family:var(--mono);font-size:12px;color:var(--blue)">${esc(o.number)}</span> ${esc(o.title || '')}`}</td>
+      <td style="${num}">${_fmtDur(o.hours)}${o.billable_hours > 0 ? `<div style="font-size:12px;color:var(--green)">${_t('{time} verrechenbar', { time: _fmtDur(o.billable_hours) })}</div>` : ''}</td>
+      <td>${bar(o.hours)}</td><td style="${num}">${cost(o)}</td></tr>`).join('');
+
+  const maxM = Math.max(...d.months.map(m => m.hours), 0);
+  const months = d.months.length > 1 ? `<div class="sep-label">${_t('Verlauf')}</div>
+    <div style="display:flex;align-items:flex-end;gap:4px;height:80px;overflow-x:auto;padding-bottom:2px">
+      ${d.months.map(m => `<div style="flex:1;min-width:26px;display:flex;flex-direction:column;align-items:center;gap:3px;height:100%;justify-content:flex-end" title="${esc(m.month)}: ${_fmtDur(m.hours)}">
+        <div style="width:100%;max-width:28px;height:${Math.max(2, Math.round(m.hours / maxM * 58))}px;background:${/^#[0-9a-f]{6}$/i.test(u?.color || '') ? u.color : 'var(--blue)'};border-radius:3px 3px 0 0"></div>
+        <span style="font-size:10px;color:var(--t4)">${esc(m.month.slice(5))}.${esc(m.month.slice(2, 4))}</span></div>`).join('')}
+    </div>` : '';
+
+  const head = tag => `<thead><tr><th>${tag}</th><th style="text-align:right">${_t('Stunden')}</th><th>${_t('Anteil')}</th><th style="text-align:right">${_t('Kosten')}</th></tr></thead>`;
+  return `<div class="modal" style="max-width:780px;width:96vw">
+    <div class="modal-head">
+      <div class="modal-title" style="display:flex;align-items:center;gap:10px">
+        ${u ? _avatar(u.name, 28, u.color) : ''}
+        <span>${u ? _t('Zeiten von {name}', { name: esc(u.name) }) : _t('Zeiten ohne Person')}</span>
+        ${u?.job_title ? `<span style="font-size:13px;font-weight:400;color:var(--t3)">${esc(u.job_title)}</span>` : ''}
+      </div>
+      <button class="btn btn-icon btn-ghost" onclick="_hideDynModal()">✕</button>
+    </div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:12px;max-height:75vh;overflow-y:auto">
+      <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+        ${presets.map(([k, l]) => `<button class="btn btn-sm ${_tr.preset === k ? 'btn-primary' : 'btn-ghost'}" onclick="_trPreset('${k}')">${l}</button>`).join('')}
+        <span style="display:inline-flex;align-items:center;gap:4px;margin-left:auto">
+          <input type="date" id="tr-from" class="fi" style="width:auto" value="${esc(_tr.from)}" onchange="_trDates()" aria-label="${_t('Von')}">
+          <span style="color:var(--t4)">–</span>
+          <input type="date" id="tr-to" class="fi" style="width:auto" value="${esc(_tr.to)}" onchange="_trDates()" aria-label="${_t('Bis')}">
+        </span>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px">
+        ${tile(_t('Stunden'), _fmtDur(t.hours), _t('{n} Einträge', { n: t.entries || 0 }))}
+        ${tile(_t('Kosten'), t.cost != null ? fmtCHF(t.cost) : '—', t.unpriced_hours > 0 ? _t('{time} ohne Satz', { time: _fmtHours(t.unpriced_hours) }) : (d.hourly_rate ? _t('heute {rate}/h', { rate: fmtCHF(d.hourly_rate) }) : ''))}
+        ${tile(_t('Projekte'), d.projects.length, _t('{n} Aufträge', { n: d.orders.length }))}
+        ${t.billable_hours > 0 ? tile(_t('Verrechenbar'), _fmtDur(t.billable_hours)) : ''}
+      </div>
+      ${!t.hours ? `<div style="color:var(--t3);font-size:13px;padding:16px 0;text-align:center">${_t('Keine Zeiten in diesem Zeitraum')}</div>` : ''}
+      ${months}
+      ${d.projects.length ? `<div class="sep-label">${_t('Projekte (PLM)')}</div>
+        <div class="tbl-wrap"><table>${head(_t('Projekt'))}<tbody>${projRows}</tbody></table></div>` : ''}
+      ${d.orders.length ? `<div class="sep-label">${_t('Aufträge (ERP)')}</div>
+        <div class="tbl-wrap"><table>${head(_t('Auftrag'))}<tbody>${orderRows}</tbody></table></div>` : ''}
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="_hideDynModal()">${_t('Schliessen')}</button></div>
+  </div>`;
 }

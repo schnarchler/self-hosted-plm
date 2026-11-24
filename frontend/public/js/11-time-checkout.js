@@ -308,22 +308,32 @@ async function loadItemTimeEntries(itemId) {
   _teItemId = itemId;
   const el = document.getElementById('item-time-list');
   if (!el) return;
-  const entries = await api(`/api/time-entries?item_id=${itemId}`);
+  const [entries, byUser] = await Promise.all([
+    api(`/api/time-entries?item_id=${itemId}`),
+    api(`/api/items/${itemId}/time-summary`).catch(() => []),
+  ]);
+  if (_teItemId !== itemId) return;   // inzwischen ein anderes Item offen
   const totalH = entries.reduce((s, e) => s + (parseFloat(e.hours)||0), 0);
+  // Kosten nur für Admins — der Server schickt sie sonst gar nicht
+  const showCost = isAdmin() && entries.some(e => e.rate != null);
   el.innerHTML = `
+    ${_itemTimeOverview(byUser)}
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
       <span style="font-size:13px;color:var(--t3)">${entries.length ? _t('{n} Einträge · {time} gesamt', { n: entries.length, time: _fmtDur(totalH) }) : _t('Noch keine Einträge')}</span>
       <button class="btn btn-primary btn-sm" onclick="openItemTimeModal()">${_t('+ Eintrag')}</button>
     </div>
     ${entries.length ? `<div class="tbl-wrap"><table>
       <thead><tr>
-        <th>${_t('Datum')}</th><th>${_t('Stunden')}</th><th>${_t('Beschreibung')}</th><th></th>
+        <th>${_t('Datum')}</th><th>${_t('Stunden')}</th><th>${_t('Beschreibung')}</th>${showCost ? `<th style="text-align:right">${_t('Kosten')}</th>` : ''}<th></th>
       </tr></thead>
       <tbody>
         ${entries.map(e => `<tr>
           <td style="font-family:var(--mono);font-size:13px">${fmtD(e.date)}${_teRangeLine(e)}</td>
           <td style="font-family:var(--mono);font-size:13px;white-space:nowrap">${_fmtDur(e.hours)}</td>
           <td style="font-size:13px;color:var(--t2)">${esc(e.description||'—')}${_teUserLine(e)}</td>
+          ${showCost ? `<td style="font-family:var(--mono);font-size:13px;text-align:right;white-space:nowrap">${e.rate != null
+            ? `${fmtCHF(e.hours * e.rate)}<div style="font-size:12px;color:var(--t4)">${fmtCHF(e.rate)}/h</div>`
+            : '<span style="color:var(--t4)">—</span>'}</td>` : ''}
           <td style="white-space:nowrap">
             <button class="btn btn-ghost btn-sm btn-icon" onclick="openItemTimeModal(${JSON.stringify(e).replace(/"/g,'&quot;')})">✏</button>
             <button class="btn btn-red btn-sm btn-icon" onclick="delItemTimeEntry(${e.id})">✕</button>
@@ -331,6 +341,56 @@ async function loadItemTimeEntries(itemId) {
         </tr>`).join('')}
       </tbody>
     </table></div>` : ''}`;
+}
+
+// Wer wie lange daran gearbeitet hat — nur hier, nicht im Datenblatt.
+// Bei Baugruppen samt den Teilen der Stückliste, wie die Entwicklungszeit.
+function _itemTimeOverview(rows) {
+  if (!rows.length) return '';
+  const total = rows.reduce((s, r) => s + (r.hours || 0), 0);
+  const withTree = rows.some(r => r.hours - r.own_hours > 0.001);
+  const showCost = isAdmin() && rows.some(r => r.cost != null);
+  const totalCost = rows.reduce((s, r) => s + (r.cost || 0), 0);
+  const unpriced = rows.reduce((s, r) => s + (r.unpriced_hours || 0), 0);
+  const num = 'font-family:var(--mono);font-size:13px;text-align:right;white-space:nowrap';
+  const person = r => r.user_name
+    ? `<div style="display:flex;align-items:center;gap:7px">${_avatar(r.user_name, 22, r.user_color)}<div style="min-width:0">
+        <div style="font-size:13px">${esc(r.user_name)}</div>${r.user_job_title ? `<div style="font-size:12px;color:var(--t3)">${esc(r.user_job_title)}</div>` : ''}</div></div>`
+    : `<span style="font-size:13px;color:var(--t3)">${_t('Ohne Person')}</span>`;
+  const share = r => {
+    const pct = total > 0 ? Math.round(r.hours / total * 100) : 0;
+    return `<div style="display:flex;align-items:center;gap:8px;min-width:110px">
+      <div style="flex:1;height:6px;border-radius:3px;background:var(--bg3);overflow:hidden">
+        <div style="width:${pct}%;height:100%;background:${/^#[0-9a-f]{6}$/i.test(r.user_color || '') ? r.user_color : 'var(--blue)'}"></div></div>
+      <span style="font-size:12px;color:var(--t3);width:34px;text-align:right">${pct}%</span></div>`;
+  };
+  return `<div class="sep-label" style="margin-top:0">${_t('Übersicht nach Person')}</div>
+    <div class="tbl-wrap" style="margin-bottom:6px"><table>
+      <thead><tr><th>${_t('Person')}</th><th style="text-align:right">${_t('Stunden')}</th>
+        ${withTree ? `<th style="text-align:right" title="${_t('Direkt an diesem Item erfasst, ohne die Teile der Stückliste')}">${_t('davon hier')}</th>` : ''}
+        <th>${_t('Anteil')}</th>${showCost ? `<th style="text-align:right">${_t('Kosten')}</th>` : ''}</tr></thead>
+      <tbody>
+        ${rows.map(r => `<tr>
+          <td>${person(r)}</td>
+          <td style="${num}">${_fmtDur(r.hours)}</td>
+          ${withTree ? `<td style="${num};color:var(--t3)">${_fmtDur(r.own_hours)}</td>` : ''}
+          <td>${share(r)}</td>
+          ${showCost ? `<td style="${num}">${r.cost != null ? fmtCHF(r.cost) : '—'}${r.cost != null && r.hours > 0
+            ? `<div style="font-size:12px;color:var(--t4)" title="${_t('Durchschnitt der beim Erfassen festgehaltenen Sätze')}">Ø ${fmtCHF(r.cost / (r.hours - r.unpriced_hours))}/h</div>` : ''}</td>` : ''}
+        </tr>`).join('')}
+        ${rows.length > 1 ? `<tr style="font-weight:600">
+          <td style="font-size:13px">${_t('Total')}</td>
+          <td style="${num}">${_fmtDur(total)}</td>
+          ${withTree ? `<td style="${num};color:var(--t3)">${_fmtDur(rows.reduce((s, r) => s + (r.own_hours || 0), 0))}</td>` : ''}
+          <td></td>${showCost ? `<td style="${num}">${fmtCHF(totalCost)}</td>` : ''}
+        </tr>` : ''}
+      </tbody>
+    </table></div>
+    <div style="font-size:12px;color:var(--t4);margin-bottom:16px;line-height:1.5">
+      ${withTree ? _t('Samt den Teilen der Stückliste, wie die Entwicklungszeit im Datenblatt. Die Einträge unten gehören nur zu diesem Item.') + ' ' : ''}
+      ${showCost && unpriced > 0 ? _t('{time} ohne Stundensatz sind nicht in den Kosten enthalten.', { time: _fmtHours(unpriced) }) + ' ' : ''}
+      ${_t('Diese Übersicht steht nur hier, nicht im Datenblatt.')}
+    </div>`;
 }
 
 function openItemTimeModal(entry) {

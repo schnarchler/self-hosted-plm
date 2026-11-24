@@ -251,6 +251,63 @@ test('Stundensatz pro Person: Zeiten tragen die Person, das Datenblatt rechnet d
   assert.strictEqual(bgItem.dev_cost, 240);
   assert.strictEqual(bgItem.revisions[0].bom[0].dev_cost, 240);
 
+  // Der Satz wird beim Erfassen festgehalten: eine Erhöhung gilt nur für neue Zeiten
+  const neu = (await ok('/api/time-entries', { method: 'POST', body: { item_id: teil.id, hours: 1 }, cookie: ben })).body;
+  assert.ok(!('hourly_rate' in neu), 'User sieht keinen Satz');
+  assert.strictEqual((await ok(`/api/time-entries?item_id=${teil.id}`, { cookie: anna })).body.find(e => e.id === neu.id).hourly_rate, 80,
+    'Satz der Person beim Erfassen');
+  await ok(`/api/users/${ids.ben}`, { method: 'PUT', body: { hourly_rate: 120 }, cookie: anna });
+  // 2 h ohne Satz beim Erfassen → heutiger Satz 120; 2 h mit festgehaltenen 80
+  assert.strictEqual((await item()).dev_cost, 400, '2 × 120 + 2 × 80 — die Erhöhung wirkt nicht auf festgehaltene Sätze');
+  await ok('/api/time-entries', { method: 'POST', body: { item_id: teil.id, hours: 1 }, cookie: ben });
+  assert.strictEqual((await item()).dev_cost, 520, '+ 1 h × 120');
+  await ok(`/api/time-entries/${neu.id}`, { method: 'PUT', body: { date: '2026-11-02', hours: 1, user_id: ids.ben }, cookie: anna });
+  assert.strictEqual((await item()).dev_cost, 520, 'gleiche Person: Satz bleibt beim Bearbeiten');
+
+  // Übersicht nach Person — Stunden für alle, Kosten nur für Admins
+  await ok('/api/time-entries', { method: 'POST', body: { item_id: teil.id, hours: 0.5, user_id: ids.cleo }, cookie: anna });
+  const sum = (await ok(`/api/items/${teil.id}/time-summary`, { cookie: anna })).body;
+  assert.deepStrictEqual(sum.map(r => [r.user_name, r.hours, r.cost]), [['Ben', 5, 520], ['Cleo', 0.5, 50]]);
+  const sumBen = (await ok(`/api/items/${teil.id}/time-summary`, { cookie: ben })).body;
+  assert.deepStrictEqual(sumBen.map(r => [r.user_name, r.hours, 'cost' in r]), [['Ben', 5, false], ['Cleo', 0.5, false]]);
+  assert.ok(!('rate' in (await ok(`/api/time-entries?item_id=${teil.id}`, { cookie: ben })).body[0]), 'kein Satz für User');
+  const bgSum = (await ok(`/api/items/${bg.id}/time-summary`, { cookie: anna })).body;
+  assert.deepStrictEqual(bgSum.map(r => [r.hours, r.own_hours]), [[5, 0], [0.5, 0]], 'Baugruppe samt Stückliste');
+
+  // Zeiten einer Person nach Projekt und Auftrag — nur für Admins
+  const auftrag = (await ok('/api/orders', { method: 'POST', body: { title: 'Montage' }, cookie: anna })).body;
+  await ok('/api/time-entries', { method: 'POST', body: { order_id: auftrag.id, hours: 2, billable: 1, date: '2020-03-05' }, cookie: ben });
+  assert.strictEqual((await req(`/api/users/${ids.ben}/time-report`, { cookie: ben })).status, 403, 'nicht für User');
+  const rep = (await ok(`/api/users/${ids.ben}/time-report`, { cookie: anna })).body;
+  assert.strictEqual(rep.user.name, 'Ben');
+  assert.deepStrictEqual([rep.total.hours, rep.total.billable_hours], [8, 2]);
+  assert.deepStrictEqual(rep.projects.map(p => [p.name, p.hours, p.cost, p.items.map(i => i.name)]), [['Kosten', 5, 520, ['Halter']]]);
+  // Der Auftrag aus dem Funktions-Test ist gelöscht: die Stunde bleibt, mit Nummer und Titel von damals
+  assert.deepStrictEqual(rep.orders.map(o => [o.hours, o.billable_hours, !!o.deleted, o.id]), [[2, 2, false, auftrag.id], [1, 0, true, null]]);
+  assert.match(rep.orders[1].title, / – Funktion$/);
+  const r2020 = (await ok(`/api/users/${ids.ben}/time-report?from=2020-01-01&to=2020-12-31`, { cookie: anna })).body;
+  assert.deepStrictEqual([r2020.total.hours, r2020.projects.length, r2020.orders.length], [2, 0, 1], 'Zeitraum');
+  assert.strictEqual((await ok('/api/users/none/time-report', { cookie: anna })).body.user, null, 'ohne Person');
+  await ok(`/api/orders/${auftrag.id}`, { method: 'DELETE', cookie: anna });
+
+  // Teil gelöscht: Zeiten bleiben im Projekt, als gelöscht; nicht mehr in der Liste des Teils
+  const weg = (await ok(`/api/projects/${proj.id}/items`, { method: 'POST', body: { name: 'Probe', item_type: 'prt' }, cookie: anna })).body;
+  await ok('/api/time-entries', { method: 'POST', body: { item_id: weg.id, hours: 1.5 }, cookie: ben });
+  await ok(`/api/items/${weg.id}`, { method: 'DELETE', cookie: anna });
+  let kosten = (await ok(`/api/users/${ids.ben}/time-report`, { cookie: anna })).body.projects.find(p => p.name === 'Kosten');
+  assert.strictEqual(kosten.hours, 6.5);
+  const probe = kosten.items.find(i => i.deleted);
+  assert.deepStrictEqual([probe.name, probe.hours, probe.id], [`${weg.item_number} – Probe`, 1.5, null]);
+  assert.strictEqual((await ok(`/api/time-entries?item_id=${weg.id}`, { cookie: anna })).body.length, 0);
+
+  // Projekt gelöscht: Zeiten bleiben unter dem Projektnamen von damals
+  const p2 = (await ok('/api/projects', { method: 'POST', body: { name: 'Kurzlebig' }, cookie: anna })).body;
+  const t2 = (await ok(`/api/projects/${p2.id}/items`, { method: 'POST', body: { name: 'Muster', item_type: 'prt' }, cookie: anna })).body;
+  await ok('/api/time-entries', { method: 'POST', body: { item_id: t2.id, hours: 0.25 }, cookie: ben });
+  await ok(`/api/projects/${p2.id}`, { method: 'DELETE', cookie: anna });
+  const dp = (await ok(`/api/users/${ids.ben}/time-report`, { cookie: anna })).body.projects.find(p => p.deleted);
+  assert.deepStrictEqual([dp.name, dp.hours, dp.items[0].name, dp.items[0].deleted], [`${p2.number} · Kurzlebig`, 0.25, `${t2.item_number} – Muster`, true]);
+
   await ok('/api/settings', { method: 'PUT', body: { hourly_rate: '' }, cookie: anna });
   await ok(`/api/users/${ids.ben}`, { method: 'PUT', body: { hourly_rate: '' }, cookie: anna });
   assert.strictEqual((await ok('/api/users', { cookie: anna })).body.find(u => u.id === ids.ben).hourly_rate, null, 'leer entfernt den Satz');
