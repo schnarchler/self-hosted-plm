@@ -103,7 +103,7 @@ function _renderPartsRows() {
       const co = state.checkouts.some(c => c.item_id === i.id);
       return `<div class="tree-row${i.id === sel ? ' selected' : ''}" id="tr-${i.id}" onclick="openItemDetail(${i.id})"${_thumbAttr(i.thumb_id)}>
         ${_itemChip(i.item_type, 22)}
-        <span class="tree-num">${esc(i.item_number)}</span>
+        <span class="tree-num">${esc(i.item_number)}</span>${_phantomTag(i)}
         ${code ? `<span class="tree-revno" title="Kurzcode · rev${esc(i.rev ?? '')}">${esc(code)}</span>`
           : i.rev ? `<span class="tree-revno">rev${esc(i.rev)}</span>` : ''}
         <span class="tree-name">${esc(i.name)}</span>
@@ -331,7 +331,7 @@ function _renderTreeNode(item, map, isRoot) {
       style="${co ? 'background:var(--amber-soft);box-shadow:inset 2px 0 0 var(--amber);' : ''}">
       <span class="tree-tog" id="${tid}" onclick="event.stopPropagation();togN('${nid}','${tid}')" style="color:var(--t4)" title="${revKids.length && !bomKids.length ? _t('Revisionen') : ''}">${hasKids ? '▶' : ''}</span>
       ${_itemChip(item.item_type, 22)}
-      <span class="tree-num">${esc(item.item_number)}</span>
+      <span class="tree-num">${esc(item.item_number)}</span>${_phantomTag(item)}
       ${printCodeOf(item, rev) ? `<span class="tree-revno" title="Kurzcode · rev${esc(rev?.rev ?? '')}">${esc(printCodeOf(item, rev))}</span>`
         : rev ? `<span class="tree-revno">rev${esc(rev.rev)}</span>` : ''}
       <span class="tree-name">${esc(item.name)}</span>
@@ -409,7 +409,7 @@ function openProjectDetail(p) {
       <div style="display:flex;align-items:center;gap:7px;padding:5px ${depth>0?'6px':'4px'};border-radius:var(--r-xs);cursor:pointer;transition:background .1s;${co?'background:rgba(121,221,227,.07);box-shadow:inset 2px 0 0 var(--teal);':''}" onclick="openItemDetail(${item.id})"${_thumbAttr(item.thumb_id)} onmouseover="this.style.background='${co?'rgba(121,221,227,.12)':'var(--bg3)'}'" onmouseout="this.style.background='${co?'rgba(121,221,227,.07)':''}'" >
         ${hasKids ? `<span onclick="event.stopPropagation();const e=document.getElementById('${nid}');const open=e.style.display!=='none';e.style.display=open?'none':'';this.style.transform=open?'':'rotate(90deg)'" style="color:var(--t4);font-size:11px;transition:transform .15s;flex-shrink:0;cursor:pointer">▶</span>` : '<span style="width:11px;flex-shrink:0"></span>'}
         ${_itemChip(item.item_type, 18)}
-        <span style="font-family:var(--mono);font-size:13px;color:var(--blue);flex-shrink:0">${item.item_number}</span>
+        <span style="font-family:var(--mono);font-size:13px;color:var(--blue);flex-shrink:0">${item.item_number}</span>${_phantomTag(item)}
         <span style="font-size:13px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--t1)">${esc(item.name)}</span>
         ${co ? `<span style="font-family:var(--mono);font-size:11px;color:var(--teal);background:rgba(121,221,227,.12);border:1px solid rgba(121,221,227,.25);padding:1px 5px;border-radius:3px;flex-shrink:0" title="${_t('Ausgecheckt')}">CO</span>` : ''}
         ${rev ? `<span class="status st-${rev.status}" style="font-size:11px;flex-shrink:0">rev${rev.rev}</span>` : ''}
@@ -603,6 +603,7 @@ function renderItemDetail(item, activeRevId) {
   document.getElementById('dp-title').innerHTML =
     `<span style="font-family:var(--mono);font-size:11px;font-weight:700;padding:2px 6px;border-radius:3px;background:${typeBg};color:${typeColor};flex-shrink:0">${typeLabel}</span>`
     + `<span style="font-family:var(--mono);font-size:13px;color:${typeColor};flex-shrink:0">${item.item_number}</span>`
+    + _phantomTag(item)
     // Kurzcode steht im Datenblatt, mit Revision und Kopierknopf
     // Der Name steht gross über den Tabs (dp-subtitle); der Marker hält ihn sichtbar
     + `<span data-item-title hidden></span>`
@@ -1045,6 +1046,9 @@ function renderItemSheet(item, activeRevId) {
       <span class="print-code-val">${esc(pcode)}</span>
       <button class="btn btn-icon btn-ghost btn-sm" onclick="copyText('${esc(pcode)}','${esc(_t('{code} kopiert', { code: pcode }))}')" title="${_t('Kopieren — für das Textwerkzeug im Slicer')}">⧉</button>
       ${helpTip(_t('Im Slicer mit dem Textwerkzeug aufs Teil setzen — am besten vertieft auf der Unterseite, mindestens 3 mm hoch. Die Zahl nach dem Strich ist die Revision: Bei einer neuen Revision nur sie anpassen.'))}
+    </div>` : item.phantom ? `<div class="print-code" title="${_t('Virtuelle Baugruppe — ordnet nur die Stückliste, wird nicht gefertigt oder geliefert, kein Kurzcode')}">
+      <span class="print-code-label">${_t('Kurzcode')}</span>
+      <span style="font-size:13px;color:var(--t3)">${_t('keiner — virtuelle Baugruppe')}</span>
     </div>` : '';
 
   // -- Slicer und 3D-Vorschau der gewählten Revision; ohne Datei nichts davon
@@ -1492,7 +1496,7 @@ function renderBomList(rev, item, locked) {
       ${locked ? '' : '<span style="color:var(--t4);cursor:grab;padding:0 4px;font-size:13px;flex-shrink:0">⠿</span>'}
       <span style="color:var(--t4);font-size:12px;width:20px;text-align:right;flex-shrink:0">${idx+1}</span>
       <span>${_itemChip(b.item_type,16)}</span>
-      <span class="bom-num">${esc(b.item_number)}</span>
+      <span class="bom-num">${esc(b.item_number)}</span>${_phantomTag(b)}
       <span style="flex:1;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(b.name)}</span>
       ${_bomRevBadge(b, locked, item.id, rev.id)}
       ${(b.dev_hours||0) > 0 ? `<span style="font-size:11px;font-family:var(--mono);color:var(--amber);flex-shrink:0" title="${_t('Entwicklungszeit')}">⏱ ${fmtN(b.dev_hours,2)} h</span>` : ''}

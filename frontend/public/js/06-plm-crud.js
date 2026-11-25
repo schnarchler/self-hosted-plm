@@ -1067,8 +1067,15 @@ async function openItemModal(projectId, parentId, type) {
   }
   set('im-parent-id', parentId||'');
   document.getElementById('im-type').value = type||'prt';
-  document.getElementById('im-title').textContent = type==='asm' ? _t('Neue Baugruppe') : type==='doc' ? _t('Neues Dokument') : _t('Neues Part');
+  document.getElementById('im-phantom').checked = false;
+  _imTypeChanged();
   openModal('itemModal');
+}
+// Titel nach Typ; die Wahl „virtuell“ gibt es nur bei Baugruppen
+function _imTypeChanged() {
+  const type = V('im-type');
+  document.getElementById('im-title').textContent = type==='asm' ? _t('Neue Baugruppe') : type==='doc' ? _t('Neues Dokument') : _t('Neues Part');
+  document.getElementById('im-phantom-row').style.display = type === 'asm' ? '' : 'none';
 }
 
 async function saveItem() {
@@ -1077,7 +1084,8 @@ async function saveItem() {
   if (!projectId) return toast(_t('Bitte ein Projekt wählen — die Nummer hängt daran'), 'err');
   if (!V('im-project-id')) try { localStorage.setItem('plm_last_item_project', projectId); } catch {}
   const parentId = V('im-parent-id');
-  const body = { name, description: V('im-desc'), item_type: V('im-type'), parent_id: parentId||null, source_url: V('im-url')||null, default_price: V('im-price') ? parseFloat(V('im-price')) : null };
+  const body = { name, description: V('im-desc'), item_type: V('im-type'), parent_id: parentId||null, source_url: V('im-url')||null, default_price: V('im-price') ? parseFloat(V('im-price')) : null,
+    phantom: V('im-type') === 'asm' && document.getElementById('im-phantom').checked };
   const newItem = await api(`/api/projects/${projectId}/items`,'POST',body);
   toast(_t('Item angelegt'),'ok'); closeModal('itemModal');
   if (state.view === 'parts') await renderPartsList(); else await openProject(projectId);

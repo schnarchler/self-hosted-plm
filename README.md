@@ -217,6 +217,8 @@ Implement (creates the revision to work in for each part) → Done.
   was logged; data sheet with **development time** and **development costs** (including the BOM,
   total only); the Times tab shows an **overview by person** (costs for admins only)
 - Checkout import: optionally open the new item right away
+- **Virtual (phantom) assemblies**: only structure the BOM; no short code, not in orders; costing
+  and documents list their parts directly
 - **Classification**: coloured chips, configurable under Settings → Classifications
 - **Properties per classification**, e.g. material, surface finish, manufacturer; shown on
   the data sheet, on the PDF and in search, optionally mandatory for release

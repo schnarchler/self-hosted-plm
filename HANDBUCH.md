@@ -324,7 +324,7 @@ oben sortiert nach Nummer oder Name. Ein Klick öffnet das Teil rechts.
 | Unterbaugruppe oder Part in einer Baugruppe | Baugruppe öffnen → Tab **Revisionen** → **+ Unterbaugruppe**; im Dialog lässt sich der **Typ** auf Part umstellen |
 
 Pflicht ist nur die **Bezeichnung**. Jedes neue Item bekommt eine Nummer (siehe 6.3), die erste
-Revision im Status DFT und einen Kurzcode (siehe 6.8).
+Revision im Status DFT und einen Kurzcode (siehe 6.8) — ausser einer virtuellen Baugruppe (siehe 6.4).
 
 > Ein Teil, das in einer Baugruppe angelegt wird, steht damit noch **nicht** in deren Stückliste.
 > In die Stückliste kommt es über **+ Position hinzufügen** (siehe 6.10).
@@ -353,6 +353,24 @@ Die Nummern der ERP-Belege stehen unter [26. Nummernkreise](#26-nummernkreise).
 | 📦 | **ASM** | Baugruppe — enthält andere ASM und PRT |
 | 🔩 | **PRT** | Part / Einzelteil |
 | 📄 | **DOC** | Dokument (Zeichnung, Spezifikation) |
+
+**Virtuelle Baugruppe (Phantom):** eine Baugruppe, die nur die Stückliste ordnet und nie als
+Einheit gefertigt, gelagert oder geliefert wird — z. B. eine Unterbaugruppe aus dem CAD, die es
+real nicht gibt, oder eine Gruppe „Verschraubung“ in einer grossen Stückliste. Beim Anlegen einer
+Baugruppe **Virtuelle Baugruppe (Phantom)** anhaken. Die Wahl gilt nur beim Anlegen und lässt sich
+später nicht mehr ändern. Im Baum, in der Stückliste und im Datenblatt steht dann **virtuell**.
+
+| | Virtuelle Baugruppe |
+|---|---|
+| **Nummer** | normal, z. B. `0028-asm-004` — die Teile darin werden wie gewohnt nummeriert |
+| **Kurzcode** | keiner, also auch kein Etikett |
+| **Stückliste, Revisionen, Checkout** | wie bei jeder Baugruppe |
+| **Gewicht, Kosten, Entwicklungszeit** | Summe der Teile darin |
+| **Freigabe** | die Pflichtpunkte Datei, CAD-Datei, Zeichnung und Gewicht entfallen |
+| **Aufträge, Produktion, Lager** | nicht als Position wählbar |
+| **Steckt sie in einer Baugruppe** | wird sie durchgereicht: Bei **Aus BOM kalkulieren** und auf den Belegen stehen direkt ihre Teile, die Mengen multipliziert. Im gelieferten Stand erscheint sie als Gruppierung mit **virtuell**, die Teile mit ihrer Revision darunter |
+
+Für zugekaufte Kleinteile ohne eigene Konstruktion gibt es die **Normteile** (siehe 7).
 
 ### 6.5 Item-Detailansicht
 
@@ -441,6 +459,7 @@ Zeichen, die klein gedruckt leicht verwechselt werden: `0 O Q`, `1 I L`, `2 Z`, 
 | 6 Zeichen | 113'379'904 | `XHJ7KM` |
 | **Total** | **rund 118,8 Millionen** | |
 
+- Virtuelle Baugruppen (siehe 6.4) bekommen keinen Kurzcode.
 - PLM vergibt zuerst **3 Zeichen**. Das reicht für rund 10'000 Teile. Erst wenn kaum noch ein
   3-stelliger Code frei ist, kommen **4 Zeichen** dazu, und so weiter bis 6.
 - Bestehende Codes bleiben gleich, auch wenn neue Teile längere Codes bekommen.
@@ -1407,6 +1426,7 @@ Personen unter Einstellungen → Benutzer deaktivieren.
 | **Kurzcode** | kurzer Code zum Aufdrucken aufs Teil, z. B. `XHJ-1` (mit Revision); 3 bis 6 Zeichen (siehe 6.8) |
 | **Entwicklungszeit** / **Entwicklungskosten** | Summe der erfassten Zeiten eines Items samt Stückliste, mit dem Satz von damals (siehe 6.14) |
 | **Funktion** | Aufgabe einer Person, z. B. Konstrukteur |
+| **Virtuelle Baugruppe** (Phantom) | Baugruppe, die nur die Stückliste ordnet; ohne Kurzcode, nicht in Aufträgen (siehe 6.4) |
 | **Standard-Stundensatz** | gilt für Angebote, Rechnungen und Personen ohne eigenen Satz |
 | **Revision** | Stand eines Items: `rev1`, `rev2` … Alte Revisionen bleiben erhalten |
 | **BOM** / Stückliste | Positionen einer Baugruppenrevision |

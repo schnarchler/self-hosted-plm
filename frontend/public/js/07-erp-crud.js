@@ -294,7 +294,7 @@ async function searchItemsForLine(q) {
   const res = document.getElementById('li-plm-results');
   if (!q || q.length < 1) { res.style.display='none'; return; }
   _liSearchTimer = setTimeout(async () => {
-    const items = await api('/api/items-all?q='+encodeURIComponent(q));
+    const items = await api('/api/items-all?exclude_phantom=1&q='+encodeURIComponent(q));
     if (!items.length) { res.innerHTML='<div style="padding:10px;font-size:13px;color:var(--t3)">' + _t('Keine Treffer') + '</div>'; res.style.display='block'; return; }
     res.innerHTML = items.map(i => {
       const rev = i.latest_revision;

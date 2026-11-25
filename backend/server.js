@@ -1104,6 +1104,9 @@ function applySchema() {
     if (itemCols.includes(col)) db.run(`ALTER TABLE items DROP COLUMN ${col}`);
   }
   try { db.run('ALTER TABLE items ADD COLUMN short_code TEXT DEFAULT NULL'); } catch {}
+  // Virtuelle Baugruppe (Phantom): ordnet nur die Stückliste, wird nie gefertigt,
+  // gelagert oder geliefert — kein Kurzcode, nicht in Aufträgen. Nur beim Anlegen wählbar.
+  try { db.run('ALTER TABLE items ADD COLUMN phantom INTEGER DEFAULT 0'); } catch {}
   // Eigenschaften je Klassifizierung (Werkstoff, Hersteller …) als JSON { Feld-ID: Wert }
   try { db.run('ALTER TABLE items ADD COLUMN attributes TEXT DEFAULT NULL'); } catch {}
   // Jeder je vergebene Kurzcode bleibt hier reserviert — auch nach dem
@@ -1116,7 +1119,8 @@ function applySchema() {
   db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_items_short_code ON items(short_code)');
   db.run('INSERT OR IGNORE INTO short_codes (code,item_id) SELECT short_code,id FROM items WHERE short_code IS NOT NULL');
   {
-    const missing = all('SELECT id FROM items WHERE short_code IS NULL ORDER BY id');
+    // Für alte Daten und ältere Sicherungen; virtuelle Baugruppen bekommen keinen
+    const missing = all('SELECT id FROM items WHERE short_code IS NULL AND COALESCE(phantom,0)=0 ORDER BY id');
     missing.forEach(r => assignShortCode(r.id));
     if (missing.length) console.log(`Kurzcode: ${missing.length} Teil(e) nachgetragen`);
   }
@@ -2040,6 +2044,32 @@ function keepTimeOfOrder(orderId) {
   run(`UPDATE time_entries SET deleted_at=datetime('now'), deleted_label=? WHERE order_id=? AND deleted_at IS NULL`,
     [`${o.number} – ${o.title}`, orderId]);
 }
+// Virtuelle Baugruppen gibt es nicht als Auftrags-, Produktions- oder Lagerposition.
+// Liefert true, wenn die Anfrage deshalb abgewiesen wurde.
+function rejectPhantom(res, itemId) {
+  if (!itemId || !get('SELECT 1 as y FROM items WHERE id=? AND phantom=1', [itemId])) return false;
+  res.status(400).json({ error: 'Virtuelle Baugruppen werden nicht gefertigt oder geliefert — bitte die Teile darin wählen.' });
+  return true;
+}
+// Stückliste einer Revision, virtuelle Baugruppen aufgelöst: an ihrer Stelle
+// stehen ihre Teile, die Mengen multipliziert. Gleiche Teile werden zusammengezählt.
+function flatBom(revId, cols = 'i.item_number, i.name, i.item_type', mult = 1, trail = [], out = new Map()) {
+  if (trail.length > 30) return [...out.values()];
+  for (const b of all(`SELECT b.child_item_id, b.child_rev_id, b.quantity, b.unit, b.position, i.phantom, ${cols}
+      FROM bom b JOIN items i ON i.id=b.child_item_id WHERE b.parent_rev_id=? ORDER BY b.position, b.id`, [revId])) {
+    const qty = (parseFloat(b.quantity) || 1) * mult;
+    if (b.phantom) {
+      if (trail.includes(b.child_item_id)) continue;   // Zyklus
+      const rev = (b.child_rev_id && get('SELECT id FROM revisions WHERE id=?', [b.child_rev_id])) || getActiveRevision(b.child_item_id);
+      if (rev) flatBom(rev.id, cols, qty, trail.concat(b.child_item_id), out);
+      continue;
+    }
+    const key = b.child_item_id + '|' + (b.unit || '');
+    if (out.has(key)) out.get(key).quantity += qty;
+    else { const { phantom, child_rev_id, ...row } = b; out.set(key, { ...row, quantity: qty }); }
+  }
+  return [...out.values()];
+}
 // Satz, der für eine neue Zeit dieser Person gilt: ihr eigener, sonst der Standard
 function rateForUser(userId) {
   const own = userId ? get('SELECT hourly_rate FROM users WHERE id=?', [userId])?.hourly_rate : null;
@@ -2287,8 +2317,8 @@ function newShortCode() {
   throw new Error('Kein freier Kurzcode gefunden');
 }
 function assignShortCode(itemId) {
-  const it = get('SELECT short_code FROM items WHERE id=?', [itemId]);
-  if (!it) return null;
+  const it = get('SELECT short_code, phantom FROM items WHERE id=?', [itemId]);
+  if (!it || it.phantom) return null;   // virtuelle Baugruppe: nichts zum Aufdrucken
   if (it.short_code) return it.short_code;
   const code = newShortCode();
   db.run('INSERT INTO short_codes (code,item_id) VALUES (?,?)', [code, itemId]);
@@ -2974,7 +3004,7 @@ function _datasetDims(ds) {
 // der neusten Revision samt Status. Angelegt wird weiterhin im Projekt —
 // die Nummer hängt an ihm.
 app.get('/api/items', (req, res) => {
-  res.json(all(`SELECT i.id, i.item_type, i.item_number, i.name, i.short_code, i.classification, i.created_at,
+  res.json(all(`SELECT i.id, i.item_type, i.item_number, i.name, i.short_code, i.phantom, i.classification, i.created_at,
       p.id AS project_id, p.number AS project_number, p.name AS project_name,
       r.id AS rev_id, r.rev, r.status, ${thumbIdSql('i.id')} AS thumb_id
     FROM items i JOIN projects p ON p.id=i.project_id
@@ -2996,7 +3026,7 @@ app.get('/api/items/:id', (req, res) => {
     // Gelieferte Revisionen sind fixiert (siehe GELIEFERTER STAND)
     rev.delivered = deliveriesOfRevision(rev.id);
     if (item.item_type === 'asm') {
-      rev.bom = all(`SELECT b.*, i.item_number, i.name, i.item_type, i.default_price, ${thumbIdSql('i.id')} AS thumb_id
+      rev.bom = all(`SELECT b.*, i.item_number, i.name, i.item_type, i.phantom, i.default_price, ${thumbIdSql('i.id')} AS thumb_id
         FROM bom b JOIN items i ON b.child_item_id=i.id WHERE b.parent_rev_id=? ORDER BY b.position`, [rev.id]);
       rev.bom.forEach(b => {
         b.child_active_rev = getActiveRevision(b.child_item_id);
@@ -3081,13 +3111,14 @@ app.post('/api/projects/:projectId/items', (req, res) => {
   const derivedClass = canonicalClass(req.body.classification
     || getSetting(source_url ? 'default_class_bought' : 'default_class_own', ''));
 
-  const itemId = runGetId('INSERT INTO items (project_id,parent_id,item_type,item_number,name,description,source_url,default_price,classification,attributes) VALUES (?,?,?,?,?,?,?,?,?,?)',
+  const phantom = item_type === 'asm' && !!req.body.phantom ? 1 : 0;
+  const itemId = runGetId('INSERT INTO items (project_id,parent_id,item_type,item_number,name,description,source_url,default_price,classification,attributes,phantom) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
     [project.id, parent_id || null, item_type, item_number, name, description || '', source_url || null, default_price != null ? parseFloat(default_price) : null, derivedClass,
-     cleanAttrs(req.body.attributes, classFields(derivedClass))]);
+     cleanAttrs(req.body.attributes, classFields(derivedClass)), phantom]);
   assignShortCode(itemId);
   run('INSERT INTO revisions (item_id,rev,status,description,default_price,item_description) VALUES (?,?,?,?,?,?)',
     [itemId, firstRevLabel(), 'DFT', 'Erste Revision', default_price != null ? parseFloat(default_price) : null, description || '']);
-  log('item', itemId, 'Erstellt', item_type + ' ' + item_number + ' rev' + firstRevLabel());
+  log('item', itemId, 'Erstellt', item_type + ' ' + item_number + ' rev' + firstRevLabel() + (phantom ? ' · virtuell' : ''));
   res.json(get('SELECT * FROM items WHERE id=?', [itemId]));
 });
 
@@ -3667,8 +3698,11 @@ const RELEASE_CHECKS = {
   classification: { label: 'Klassifizierung', ok: item => !!String(item.classification || '').trim() },
   weight:         { label: 'Gewicht',        ok: (item, rev) => item.item_type !== 'prt' || rev.weight_g > 0 },
 };
+// Virtuelle Baugruppe: es gibt nichts zu fertigen — keine Datei, Zeichnung, kein Gewicht
+const PHANTOM_SKIPS = new Set(['file', 'cad', 'drawing', 'weight']);
 function releaseMissing(item, rev) {
-  const on = getSetting('release_checks', '').split(',').map(x => x.trim()).filter(k => RELEASE_CHECKS[k]);
+  const on = getSetting('release_checks', '').split(',').map(x => x.trim())
+    .filter(k => RELEASE_CHECKS[k] && !(item.phantom && PHANTOM_SKIPS.has(k)));
   const attrs = parseAttrs(item.attributes);
   return [
     ...on.filter(k => !RELEASE_CHECKS[k].ok(item, rev))
@@ -5163,6 +5197,7 @@ app.delete('/api/orders/:id', (req, res) => {
 
 app.post('/api/orders/:id/items', (req, res) => {
   const { item_id, description, quantity, unit, unit_price, discount_pct, notes, raw_material_id, estimated_hours, printer_name, estimated_print_hours } = req.body;
+  if (rejectPhantom(res, item_id)) return;
   const id = runGetId('INSERT INTO order_items (order_id,item_id,description,quantity,unit,unit_price,discount_pct,notes,raw_material_id,estimated_hours,printer_name,estimated_print_hours) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
     [req.params.id, item_id||null, description, quantity||1, normUnit(unit), unit_price||0, discount_pct||0, notes||'', raw_material_id||null, estimated_hours||null, printer_name||'', estimated_print_hours||null]);
   const row = get('SELECT * FROM order_items WHERE id=?', [id]);
@@ -5195,6 +5230,7 @@ function syncPriceFromOrderItem(orderItemId) {
 
 app.put('/api/order-items/:id', (req, res) => {
   const { item_id, description, quantity, unit, unit_price, discount_pct, notes, raw_material_id, estimated_hours, printer_name, estimated_print_hours } = req.body;
+  if (rejectPhantom(res, item_id)) return;
   const before = get('SELECT * FROM order_items WHERE id=?', [req.params.id]);
   run('UPDATE order_items SET item_id=?,description=?,quantity=?,unit=?,unit_price=?,discount_pct=?,notes=?,raw_material_id=?,estimated_hours=?,printer_name=?,estimated_print_hours=? WHERE id=?',
     [item_id||null, description, quantity||1, normUnit(unit), unit_price||0, discount_pct||0, notes||'', raw_material_id||null, estimated_hours||null, printer_name||'', estimated_print_hours||null, req.params.id]);
@@ -5933,10 +5969,12 @@ app.get('/api/items-released', (req, res) => {
 
 app.get('/api/items-all', (req, res) => {
   const q = req.query.q ? '%' + req.query.q + '%' : '%';
-  const items = all(`SELECT i.id, i.item_number, i.name, i.item_type, i.default_price, i.weight_g,
+  // exclude_phantom=1: Auswahl für Aufträge, Produktion, Lager — virtuelle Baugruppen gibt es dort nicht
+  const noPhantom = req.query.exclude_phantom === '1' ? 'AND COALESCE(i.phantom,0)=0' : '';
+  const items = all(`SELECT i.id, i.item_number, i.name, i.item_type, i.phantom, i.default_price, i.weight_g,
     p.name as project_name, p.number as project_number
     FROM items i JOIN projects p ON i.project_id=p.id
-    WHERE i.item_number LIKE ? OR i.name LIKE ?
+    WHERE (i.item_number LIKE ? OR i.name LIKE ?) ${noPhantom}
     ORDER BY i.item_number LIMIT 40`, [q, q]);
   items.forEach(i => {
     i.latest_revision = getLatestRevision(i.id);
@@ -7012,8 +7050,9 @@ function attachDeliveredRevision(di, delivered) {
   di.effective_rev = fixed || di.active_rev;
   di.rev_outdated = !!(fixed && active && fixed.id !== active.id);
   if (delivered && di.item_type === 'asm') {
-    di.structure = all(`SELECT ds.*, r.status as rev_status FROM delivery_structure ds
+    di.structure = all(`SELECT ds.*, r.status as rev_status, COALESCE(it.phantom,0) AS phantom FROM delivery_structure ds
       LEFT JOIN revisions r ON r.id=ds.revision_id
+      LEFT JOIN items it ON it.id=ds.item_id
       WHERE ds.delivery_item_id=? ORDER BY ds.position`, [di.id]);
     for (const row of di.structure) {
       const a = getActiveRevision(row.item_id);
@@ -7195,6 +7234,7 @@ app.delete('/api/deliveries/:id', (req, res) => {
 app.post('/api/deliveries/:id/items', (req, res) => {
   const { item_id, description, quantity, unit, unit_price, print_settings_json, notes, position, raw_material_id } = req.body;
   if (!description) return res.status(400).json({ error: 'Beschreibung fehlt' });
+  if (rejectPhantom(res, item_id)) return;
   const id = runGetId(`INSERT INTO delivery_items (delivery_id,item_id,description,quantity,unit,unit_price,print_settings_json,notes,position,raw_material_id)
     VALUES (?,?,?,?,?,?,?,?,?,?)`,
     [req.params.id, item_id||null, description, quantity||1, normUnit(unit),
@@ -7210,6 +7250,7 @@ app.post('/api/deliveries/:id/items', (req, res) => {
 
 app.put('/api/delivery-items/:id', (req, res) => {
   const { item_id, description, quantity, unit, unit_price, print_settings_json, notes, position, raw_material_id } = req.body;
+  if (rejectPhantom(res, item_id)) return;
   const before = get(`SELECT di.*, d.status as delivery_status FROM delivery_items di
     JOIN deliveries d ON d.id=di.delivery_id WHERE di.id=?`, [req.params.id]);
   if (!before) return res.status(404).json({ error: 'Position nicht gefunden' });
@@ -7524,7 +7565,8 @@ function attachSubItems(positions) {
   positions.forEach(p => {
     if (p.item_id && p.item_type === 'asm') {
       const rev = getActiveRevision(p.item_id);
-      if (rev) p.sub_items = all('SELECT b.quantity,b.unit,i.item_number,i.name,i.item_type FROM bom b JOIN items i ON b.child_item_id=i.id WHERE b.parent_rev_id=? ORDER BY b.position', [rev.id]);
+      // Virtuelle Baugruppen aufgelöst: auf dem Beleg stehen die echten Teile
+      if (rev) p.sub_items = flatBom(rev.id).map(({ quantity, unit, item_number, name, item_type }) => ({ quantity, unit, item_number, name, item_type }));
     }
   });
 }
@@ -8239,6 +8281,7 @@ app.get('/api/inventory', (req, res) => {
 
 app.post('/api/inventory', (req, res) => {
   const { name, category, sku, unit, min_qty, price_per_unit, supplier_id, notes, item_id, color, material } = req.body;
+  if (rejectPhantom(res, item_id)) return;
   if (!name) return res.status(400).json({ error: 'Name fehlt' });
   const id = runGetId('INSERT INTO inventory_items (name,category,sku,unit,stock_qty,min_qty,price_per_unit,supplier_id,notes,item_id,color,material) VALUES (?,?,?,?,0,?,?,?,?,?,?,?)',
     [name, normInvCategory(category), sku||'', normUnit(unit), parseFloat(min_qty)||0,
@@ -8260,6 +8303,7 @@ app.get('/api/inventory/:id', (req, res) => {
 
 app.put('/api/inventory/:id', (req, res) => {
   const { name, category, sku, unit, min_qty, price_per_unit, supplier_id, notes, item_id, color, material } = req.body;
+  if (rejectPhantom(res, item_id)) return;
   run(`UPDATE inventory_items SET name=?,category=?,sku=?,unit=?,min_qty=?,price_per_unit=?,supplier_id=?,notes=?,item_id=?,color=?,material=?,updated_at=datetime('now') WHERE id=?`,
     [name, normInvCategory(category), sku||'', normUnit(unit), parseFloat(min_qty)||0,
      price_per_unit!=null&&price_per_unit!==''?parseFloat(price_per_unit):null, supplier_id||null, notes||'',
@@ -8601,9 +8645,9 @@ app.get('/api/items/:id/bom-for-quote', (req, res) => {
   if (!item) return res.status(404).json({ error: 'Nicht gefunden' });
   const rev = getActiveRevision(item.id);
   if (!rev) return res.json([]);
-  const bom = all(`SELECT b.quantity, b.unit, i.id, i.item_number, i.name, i.item_type, i.weight_g, i.default_price
-    FROM bom b JOIN items i ON b.child_item_id=i.id
-    WHERE b.parent_rev_id=? ORDER BY b.position`, [rev.id]);
+  // Virtuelle Baugruppen aufgelöst: kalkuliert werden ihre Teile, Mengen multipliziert
+  const bom = flatBom(rev.id, 'i.id, i.item_number, i.name, i.item_type, i.weight_g, i.default_price')
+    .map(({ child_item_id, position, ...b }) => b);
   bom.forEach(b => { b.manufacturing_cost = calcItemCost(b.id); });
   res.json(bom);
 });

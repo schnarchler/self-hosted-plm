@@ -195,6 +195,8 @@ ECO-Weg steht dort weiterhin zur Verfügung.
   Datenblatt mit **Entwicklungszeit** und **Entwicklungskosten** (samt Stückliste, nur das Total);
   im Tab Zeiten die **Übersicht nach Person** (Kosten nur für Admins)
 - Checkout-Import: neues Item auf Wunsch gleich öffnen
+- **Virtuelle Baugruppen (Phantom)** – ordnen nur die Stückliste: kein Kurzcode, nicht in Aufträgen;
+  in Kalkulation und auf Belegen stehen direkt ihre Teile
 - **Klassifizierung** – farbige Chips, konfigurierbar unter Einstellungen → Klassifizierungen
 - **Eigenschaften je Klassifizierung** – z. B. Werkstoff, Oberfläche, Hersteller; im Datenblatt,
   auf der PDF und in der Suche, optional Pflicht für die Freigabe

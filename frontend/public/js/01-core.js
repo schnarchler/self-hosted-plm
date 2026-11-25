@@ -381,6 +381,10 @@ function _itemSvg(t)   { return t==="asm" ? _SVG_ASM : t==="doc" ? _SVG_DOC : _S
 // Zeilen mit Vorschaubild beim Überfahren (siehe 08-ui-api.js): thumb_id vom
 // Server — gezeichnete STL, Bild aus der 3MF oder hochgeladenes Bild
 const _thumbAttr = thumbId => thumbId ? ` data-thumb="${Number(thumbId)}"` : '';
+// Virtuelle Baugruppe (Phantom): kleiner Vermerk neben Nummer oder Name
+function _phantomTag(x) {
+  return x?.phantom ? `<span class="phantom-tag" title="${_t('Virtuelle Baugruppe — ordnet nur die Stückliste, wird nicht gefertigt oder geliefert, kein Kurzcode')}">${_t('virtuell')}</span>` : '';
+}
 function _itemChip(t, sz=20) { return `<span style="font-size:${Math.round(sz*0.75)}px;line-height:1;flex-shrink:0">${_itemSvg(t)}</span>`; }
 
 function _classColor(cls) {

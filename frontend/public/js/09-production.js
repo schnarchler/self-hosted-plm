@@ -136,7 +136,7 @@ function _deliveryRevBadge(item, deliveryId, delivered) {
       <span class="status st-${eff.status}" style="font-size:11px${fixed ? '' : ';opacity:.7'}">${fixed ? '🔒 ' : ''}rev${esc(eff.rev)}</span>
       ${item.rev_outdated ? `<span style="font-size:10px;font-family:var(--mono);color:var(--amber)">↑${newest}</span>` : ''}
       ${item.rev_fixed === 'migration' ? '<span style="font-size:10px;color:var(--t4)">ermittelt</span>' : ''}
-      ${item.structure?.length ? `<span class="chip" style="font-size:10px">${_t('{n} Teile', { n: item.structure.length })}</span>` : ''}
+      ${item.structure?.length ? `<span class="chip" style="font-size:10px">${_t('{n} Teile', { n: item.structure.filter(r => !r.phantom).length })}</span>` : ''}
     </span>`;
 }
 
@@ -149,6 +149,7 @@ function _deliveredStructureHtml(rows) {
           style="display:flex;align-items:center;gap:8px;padding:5px 9px 5px ${9 + (r.depth - 1) * 18}px;background:var(--bg2);border:1px solid var(--line);border-radius:var(--r-xs);cursor:pointer">
           ${_itemChip(r.item_type, 14)}
           <span style="font-family:var(--mono);font-size:12px;color:var(--blue);flex-shrink:0">${esc(r.item_number || '—')}</span>
+          ${_phantomTag(r)}
           <span style="flex:1;min-width:0;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.name || '')}</span>
           <span style="font-family:var(--mono);font-size:12px;color:var(--t3);flex-shrink:0">${fmtN(r.quantity, 0)}×</span>
           <span class="status st-${r.rev_status || 'DFT'}" style="font-size:11px;flex-shrink:0">🔒 rev${esc(r.rev || '—')}</span>
@@ -387,7 +388,7 @@ async function searchItemsForDim(q) {
   const res = document.getElementById('dim-plm-results');
   if (!q || q.length < 1) { res.style.display='none'; return; }
   _dimSearchTimer = setTimeout(async () => {
-    const items = await api('/api/items-all?q='+encodeURIComponent(q));
+    const items = await api('/api/items-all?exclude_phantom=1&q='+encodeURIComponent(q));
     if (!items.length) { res.innerHTML='<div style="padding:10px;font-size:13px;color:var(--t3)">' + _t('Keine Treffer') + '</div>'; res.style.display='block'; return; }
     res.innerHTML = items.map(i => {
       const icon = _itemChip(i.item_type, 18);

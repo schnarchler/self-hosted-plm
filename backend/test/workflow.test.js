@@ -935,3 +935,61 @@ test('Pflicht für die Freigabe: Standard eine Datei und das Gewicht', async () 
     await api('/api/settings', 'PUT', { release_checks: '' });
   }
 });
+
+test('Virtuelle Baugruppe: kein Kurzcode, nicht in Aufträgen, Teile werden durchgereicht', async () => {
+  await api('/api/settings', 'PUT', { release_checks: 'file,cad,drawing,weight' });
+  try {
+    const proj = await api('/api/projects', 'POST', { name: 'Phantom' });
+    const mk = body => api(`/api/projects/${proj.id}/items`, 'POST', body);
+    const schraube = await mk({ name: 'Schraube', item_type: 'prt' });
+    const mutter = await mk({ name: 'Mutter', item_type: 'prt' });
+    const gruppe = await mk({ name: 'Verschraubung', item_type: 'asm', phantom: true });
+    const geraet = await mk({ name: 'Gerät', item_type: 'asm' });
+    // Nur Baugruppen können virtuell sein
+    assert.strictEqual((await mk({ name: 'Kein Phantom', item_type: 'prt', phantom: true })).phantom, 0);
+
+    assert.deepStrictEqual([gruppe.phantom, gruppe.short_code], [1, null], 'kein Kurzcode');
+    assert.ok(geraet.short_code, 'echte Baugruppe hat einen');
+    // Freigabe: Datei, CAD, Zeichnung, Gewicht entfallen
+    assert.deepStrictEqual((await api(`/api/items/${gruppe.id}`)).revisions[0].release_missing, []);
+
+    // Gerät = 1× Verschraubung (2× Schraube, 2× Mutter) + 1× Schraube; Gerät 3×
+    const gRev = (await api(`/api/items/${gruppe.id}`)).revisions[0].id;
+    await api(`/api/revisions/${gRev}/bom`, 'POST', { child_item_id: schraube.id, quantity: 2 });
+    await api(`/api/revisions/${gRev}/bom`, 'POST', { child_item_id: mutter.id, quantity: 2 });
+    const aRev = (await api(`/api/items/${geraet.id}`)).revisions[0].id;
+    await api(`/api/revisions/${aRev}/bom`, 'POST', { child_item_id: gruppe.id, quantity: 1 });
+    await api(`/api/revisions/${aRev}/bom`, 'POST', { child_item_id: schraube.id, quantity: 1 });
+    assert.strictEqual((await api(`/api/items/${geraet.id}`)).revisions[0].bom.find(b => b.child_item_id === gruppe.id).phantom, 1);
+
+    // Aus BOM kalkulieren: die Teile, zusammengezählt, ohne die virtuelle Baugruppe
+    const quote = await api(`/api/items/${geraet.id}/bom-for-quote`);
+    assert.deepStrictEqual(quote.map(b => [b.name, b.quantity]).sort(), [['Mutter', 2], ['Schraube', 3]]);
+
+    // Nicht als Position in Auftrag, Produktion, Lager
+    const o = await api('/api/orders', 'POST', { title: 'Phantomtest' });
+    const nope = await apiFails(`/api/orders/${o.id}/items`, 'POST', { item_id: gruppe.id, description: 'x' });
+    assert.strictEqual(nope.status, 400);
+    assert.match(JSON.parse(nope.text).error, /Virtuelle Baugruppen/);
+    const d = await api('/api/deliveries', 'POST', { title: 'Phantomtest' });
+    assert.strictEqual((await apiFails(`/api/deliveries/${d.id}/items`, 'POST', { item_id: gruppe.id, description: 'x' })).status, 400);
+    assert.strictEqual((await apiFails('/api/inventory', 'POST', { name: 'x', item_id: gruppe.id })).status, 400);
+    assert.ok(!(await api('/api/items-all?exclude_phantom=1&q=Verschraubung')).length, 'nicht in der Auswahl');
+    assert.strictEqual((await api('/api/items-all?q=Verschraubung')).length, 1, 'sonst schon (z. B. Datei anhängen)');
+
+    // Beleg: Unterpositionen der Baugruppe ohne die virtuelle
+    await api(`/api/orders/${o.id}/items`, 'POST', { item_id: geraet.id, description: 'Gerät', quantity: 3, unit_price: 10 });
+    const inv = await api(`/api/orders/${o.id}/invoice-data`);
+    const pos = inv.positions.find(p => p.item_id === geraet.id);
+    assert.deepStrictEqual(pos.sub_items.map(s => [s.name, s.quantity]).sort(), [['Mutter', 2], ['Schraube', 3]]);
+
+    // Gelieferter Stand: virtuelle Baugruppe nur als Gruppierung, markiert
+    await api(`/api/deliveries/${d.id}/items`, 'POST', { item_id: geraet.id, description: 'Gerät', quantity: 3 });
+    await api(`/api/deliveries/${d.id}`, 'PUT', { title: 'Phantomtest', status: 'DELIVERED' });
+    const st = (await api(`/api/deliveries/${d.id}`)).items[0].structure;
+    assert.deepStrictEqual(st.map(r => [r.name, r.depth, r.phantom]),
+      [['Verschraubung', 1, 1], ['Schraube', 2, 0], ['Mutter', 2, 0], ['Schraube', 1, 0]]);
+  } finally {
+    await api('/api/settings', 'PUT', { release_checks: '' });
+  }
+});
