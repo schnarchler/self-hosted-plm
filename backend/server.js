@@ -45,6 +45,11 @@ function saveConfig(obj) {
   }
   fs.writeFileSync(PLM_CONFIG_PATH, lines.join('\n'));
 }
+// Eine Zeile ganz aus plm.config entfernen (einmalige Befehle wie reset_admin_pin)
+function removeConfigKey(key) {
+  const lines = fs.readFileSync(PLM_CONFIG_PATH, 'utf8').split('\n');
+  fs.writeFileSync(PLM_CONFIG_PATH, lines.filter(l => !l.trim().startsWith(key + '=')).join('\n'));
+}
 
 if (!fs.existsSync(PLM_CONFIG_PATH)) {
   fs.writeFileSync(PLM_CONFIG_PATH,
@@ -1463,9 +1468,29 @@ function applySchema() {
       db.run("INSERT OR IGNORE INTO settings (key,value) VALUES ('ui_lang','de')");
   });
 
+  applyAdminPinReset();
   saveDb();
   console.log('Datenbank bereit: ' + DB_PATH);
   recalcOnStart();
+}
+
+// Notausgang, wenn die Admin-PIN vergessen ist: In plm.config die Zeile
+// reset_admin_pin=1 eintragen und PLM neu starten. Die PINs aller aktiven
+// Admins werden entfernt, die Zeile danach gelöscht. Das braucht Zugriff auf
+// die Dateien dieses PCs bzw. Servers — über den Browser geht es nicht.
+function applyAdminPinReset() {
+  if (loadConfig().reset_admin_pin !== '1') return;
+  const admins = all("SELECT id, name FROM users WHERE role='admin' AND active=1 AND pin_hash IS NOT NULL");
+  for (const a of admins) {
+    db.run('UPDATE users SET pin_hash=NULL WHERE id=?', [a.id]);
+    _pinFails.delete(a.id);
+    log('user', a.id, 'Person geändert', `${a.name}: PIN zurückgesetzt (über plm.config)`);
+  }
+  try { removeConfigKey('reset_admin_pin'); }
+  catch (err) { console.error('  reset_admin_pin konnte nicht aus plm.config entfernt werden: ' + err.message); }
+  console.log(admins.length
+    ? `Admin-PIN zurueckgesetzt: ${admins.map(a => a.name).join(', ')} - jetzt ohne PIN waehlen und eine neue setzen`
+    : 'reset_admin_pin: kein Admin mit PIN gefunden');
 }
 
 function recalcOnStart() {
@@ -2650,7 +2675,30 @@ function checkPin(pin, stored) {
   const want = Buffer.from(hash || '', 'hex');
   return got.length === want.length && crypto.timingSafeEqual(got, want);
 }
-const validPin = pin => /^.{4,12}$/.test(String(pin));
+// PIN oder Passwort: 4 bis 64 beliebige Zeichen. Gespeichert wird nur der
+// scrypt-Hash mit eigenem Salt (hashPin) — nie der Text selbst.
+const validPin = pin => /^.{4,64}$/s.test(String(pin));
+
+// Falsche PIN: nach 5 Fehlversuchen für diese Person warten — 30 s, jeder
+// weitere verdoppelt bis höchstens 15 min. Eine richtige Eingabe setzt zurück.
+// Nur im Speicher: Ein Neustart beginnt von vorn.
+const PIN_FREE_TRIES = 5, PIN_WAIT_MS = 30 * 1000, PIN_WAIT_MAX_MS = 15 * 60 * 1000;
+const _pinFails = new Map();   // user_id → { fails, until }
+function pinWaitSeconds(userId) {
+  const f = _pinFails.get(userId);
+  return f && f.until > Date.now() ? Math.ceil((f.until - Date.now()) / 1000) : 0;
+}
+// Prüft die PIN mit Sperre. Liefert null (stimmt) oder die Fehlerantwort
+function checkPinLimited(userId, pin, stored, wrongMsg) {
+  const wait = pinWaitSeconds(userId);
+  if (wait) return { status: 429, body: { error: `Zu viele falsche Versuche — bitte in ${wait} Sekunden erneut versuchen`, retry_after: wait } };
+  if (checkPin(String(pin ?? ''), stored)) { _pinFails.delete(userId); return null; }
+  const f = _pinFails.get(userId) || { fails: 0, until: 0 };
+  f.fails++;
+  if (f.fails >= PIN_FREE_TRIES) f.until = Date.now() + Math.min(PIN_WAIT_MS * 2 ** (f.fails - PIN_FREE_TRIES), PIN_WAIT_MAX_MS);
+  _pinFails.set(userId, f);
+  return { status: 403, body: { error: wrongMsg } };
+}
 
 // Was braucht eine Anfrage? null = niemand muss gewählt sein
 // Diese Anfragen ändern nichts an den Daten
@@ -2719,8 +2767,9 @@ app.post('/api/session', (req, res) => {
   if (!u) return res.status(400).json({ error: 'Diese Person gibt es nicht mehr' });
   // Die PIN schützt den Wechsel zu dieser Person — wer nach einer Pause nur weitermacht, braucht sie nicht
   const continues = resolveUser(req, users).user?.id === u.id;
-  if (u.pin_hash && !continues && !checkPin(String(req.body?.pin ?? ''), u.pin_hash)) {
-    return res.status(403).json({ error: 'PIN stimmt nicht', pin_required: true });
+  if (u.pin_hash && !continues) {
+    const bad = checkPinLimited(u.id, req.body?.pin, u.pin_hash, 'PIN stimmt nicht');
+    if (bad) return res.status(bad.status).json({ ...bad.body, pin_required: true });
   }
   startSession(req, res, u.id);
   run("UPDATE users SET last_seen_at=datetime('now') WHERE id=?", [u.id]);
@@ -2738,10 +2787,11 @@ app.put('/api/session/pin', (req, res) => {
   const me = req.plmUser && get('SELECT * FROM users WHERE id=?', [req.plmUser.id]);
   if (!me) return res.status(400).json({ error: 'Zuerst wählen, wer dran ist' });
   const { pin, current_pin } = req.body || {};
-  if (me.pin_hash && !checkPin(String(current_pin ?? ''), me.pin_hash)) {
-    return res.status(403).json({ error: 'Die bisherige PIN stimmt nicht' });
+  if (me.pin_hash) {
+    const bad = checkPinLimited(me.id, current_pin, me.pin_hash, 'Die bisherige PIN stimmt nicht');
+    if (bad) return res.status(bad.status).json(bad.body);
   }
-  if (pin && !validPin(pin)) return res.status(400).json({ error: 'Die PIN braucht 4 bis 12 Zeichen' });
+  if (pin && !validPin(pin)) return res.status(400).json({ error: 'Die PIN braucht 4 bis 64 Zeichen' });
   const pinHash = pin ? hashPin(String(pin)) : null;
   run('UPDATE users SET pin_hash=? WHERE id=?', [pinHash, me.id]);
   log('user', me.id, 'Person geändert', `${me.name}: ${!pinHash ? 'PIN entfernt' : me.pin_hash ? 'PIN geändert' : 'PIN gesetzt'}`);
@@ -2768,10 +2818,9 @@ app.post('/api/users', (req, res) => {
   const before = activeUsers();
   // Die erste Person ist allein und darf alles
   const role = before.length === 0 ? 'admin' : (ROLES.includes(req.body?.role) ? req.body.role : 'user');
-  const pin = req.body?.pin ? String(req.body.pin) : '';
-  if (pin && !validPin(pin)) return res.status(400).json({ error: 'Die PIN braucht 4 bis 12 Zeichen' });
+  // Keine PIN beim Anlegen: Jede Person setzt ihre eigene (Einstellungen → Benutzer)
   const id = runGetId('INSERT INTO users (name, role, color, pin_hash, job_title) VALUES (?,?,?,?,?)',
-    [name, role, validColor(req.body?.color) || nextUserColor(), pin ? hashPin(pin) : null, cleanJobTitle(req.body?.job_title) || null]);
+    [name, role, validColor(req.body?.color) || nextUserColor(), null, cleanJobTitle(req.body?.job_title) || null]);
   log('user', id, 'Person angelegt', `${name} (${ROLE_LABEL[role]})`);
   // Aus „allein" wird „Team": Die bisherige Person bleibt an diesem Gerät gewählt
   if (before.length === 1 && !resolveUser(req).session) startSession(req, res, before[0].id);
@@ -2800,8 +2849,12 @@ app.put('/api/users/:id', (req, res) => {
   }
   let pinHash = u.pin_hash;
   if ('pin' in b) {
-    if (b.pin && !validPin(b.pin)) return res.status(400).json({ error: 'Die PIN braucht 4 bis 12 Zeichen' });
+    // Eine fremde PIN nur entfernen (z. B. vergessen) — setzen tut jede Person ihre eigene,
+    // damit niemand das Passwort eines anderen kennt
+    if (b.pin && u.id !== req.plmUser?.id) return res.status(403).json({ error: 'Die PIN einer anderen Person lässt sich nur zurücksetzen — setzen tut sie jede Person selbst.' });
+    if (b.pin && !validPin(b.pin)) return res.status(400).json({ error: 'Die PIN braucht 4 bis 64 Zeichen' });
     pinHash = b.pin ? hashPin(String(b.pin)) : null;
+    if (!pinHash) _pinFails.delete(u.id);
   }
   run('UPDATE users SET name=?, role=?, active=?, color=?, pin_hash=?, hourly_rate=?, job_title=? WHERE id=?', [name, role, active, color, pinHash, rate, job, u.id]);
   if (!active) endSessionsOf(u.id);
@@ -2809,7 +2862,7 @@ app.put('/api/users/:id', (req, res) => {
     active !== u.active && (active ? 'aktiviert' : 'deaktiviert'), color !== u.color && 'Farbe',
     rate !== u.hourly_rate && (rate ? `Stundensatz ${rate}/h` : 'Stundensatz entfernt'),
     job !== u.job_title && (job ? `Funktion ${job}` : 'Funktion entfernt'),
-    pinHash !== u.pin_hash && (pinHash ? 'PIN gesetzt' : 'PIN entfernt')]
+    pinHash !== u.pin_hash && (pinHash ? 'PIN gesetzt' : u.id === req.plmUser?.id ? 'PIN entfernt' : 'PIN zurückgesetzt')]
     .filter(Boolean);
   if (changes.length) log('user', u.id, 'Person geändert', `${name}: ${changes.join(', ')}`);
   res.json(publicUser(get('SELECT * FROM users WHERE id=?', [u.id])));

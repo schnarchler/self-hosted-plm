@@ -1180,7 +1180,11 @@ Wer was gemacht hat — für die Nachvollziehbarkeit, nicht als Schutz. Ohne Pas
   | **Superuser** | zusätzlich freigeben (REL), als veraltet markieren (OBS), Änderungsanträge genehmigen |
   | **Admin** | alles: Einstellungen, Personen, Stammdaten löschen, Sicherungen zurückspielen, ERP-Verlauf |
 
-- **PIN:** Jede Person kann unter Einstellungen eine eigene PIN setzen, ändern oder entfernen (mit der bisherigen PIN). Sie wird beim Wechsel zu dieser Person abgefragt, nicht beim Weitermachen nach einer Pause. Admins können PINs aller Personen setzen oder entfernen, z. B. wenn jemand seine vergessen hat.
+- **PIN oder Passwort:** Jede Person kann unter Einstellungen eine eigene PIN setzen, ändern oder entfernen (mit der bisherigen PIN). Erlaubt sind 4 bis 64 Zeichen — Ziffern, Buchstaben und Sonderzeichen, also auch ein normales Passwort. Sie wird beim Wechsel zu dieser Person abgefragt, nicht beim Weitermachen nach einer Pause.
+  - **Niemand kennt die PIN eines anderen:** PLM speichert nur einen nicht umkehrbaren Hash (scrypt mit eigenem Salt), nie den Text — auch nicht in Sicherungen oder in der Historie. Admins können die PIN einer anderen Person nur **zurücksetzen** (z. B. wenn sie vergessen ist); eine neue setzt die Person danach selbst. Eine E-Mail braucht es dafür nicht.
+  - **Zurücksetzen:** Admin → **Einstellungen → Benutzer** → **PIN zurücksetzen** bei der Person. Sie wählt danach bei **Wer ist dran?** ihre Kachel ohne PIN und setzt sofort eine neue (**PIN setzen**). Bis dahin kann jede Person die Kachel wählen.
+  - **Die Admin-PIN ist vergessen** und es gibt keinen zweiten Admin: siehe 24. Häufige Fragen.
+  - **Sperre nach Fehlversuchen:** Nach 5 falschen Eingaben für eine Person muss man 30 Sekunden warten, jeder weitere Fehlversuch verdoppelt die Wartezeit (höchstens 15 Minuten). Eine richtige Eingabe, ein Zurücksetzen durch den Admin oder ein Neustart von PLM setzt den Zähler zurück.
 - **Farbe:** Jede Person bekommt automatisch eine eigene Farbe. Sie erscheint auf der Kachel bei **Wer ist dran?** (Streifen oben, Kreis mit den Initialen) und oben beim Namen — so findet man sich schneller. Ändern: unter Einstellungen → Benutzer auf den farbigen Kreis klicken (nur Admins).
 - **Funktion:** z. B. Entwicklungsingenieur, Konstrukteur, Projektleiter — aus der Vorschlagsliste oder frei eingetippt, auch gleich beim Anlegen. Sie steht auf der Kachel bei **Wer ist dran?**, in der Personenliste und bei den Zeiteinträgen. Ändern nur Admins; sehen dürfen sie alle.
 - **Stundensatz (CHF/h):** pro Person, für ihre Zeiten und die Entwicklungskosten im Datenblatt (siehe 6.14). Leer heisst: Es gilt der **Standard-Stundensatz** unter Belege & Preise. Sätze sehen und ändern nur Admins.
@@ -1195,7 +1199,9 @@ Wer was gemacht hat — für die Nachvollziehbarkeit, nicht als Schutz. Ohne Pas
 - **Rückmeldung (ab zwei Personen):** Das Sprechblasen-Symbol oben rechts meldet einen **Fehler** oder reicht eine **Idee** ein. Mitgeschickt werden Name, aktuelle Ansicht, geöffnetes Item, Version, Browser und die letzten Fehlermeldungen. Admins sehen offene Rückmeldungen oben auf dem **Dashboard**; ein Klick zeigt die Details, dort **✓ Erledigt** oder **Löschen**. **Liste →** zeigt alle, auch die erledigten — sind alle erledigt, steht dafür eine Zeile „Rückmeldungen: alle … erledigt · Liste →“ auf dem Dashboard.
 
 > Die Benutzerverwaltung schützt nicht vor Absicht: Wer im Netz Zugriff auf PLM hat, kann ohne
-> PIN jede Kachel wählen. Sie dient der Nachvollziehbarkeit.
+> PIN jede Kachel wählen. Sie dient der Nachvollziehbarkeit. PLM läuft ohne Verschlüsselung (HTTP):
+> Im eigenen Netz geht die PIN beim Wechseln lesbar über die Leitung — ein Passwort, das auch
+> anderswo verwendet wird, gehört deshalb nicht hierher.
 
 ### Version
 - **Installiert** — laufende Version mit Commit, Datum und Art der Installation (Git oder ZIP-Download). Darunter der Update-Stand: **↻ Nach Updates suchen** fragt sofort nach; gibt es Neues, öffnet sich das Update-Fenster (**Details und installieren**).
@@ -1395,6 +1401,22 @@ für diese Stunden beides.
 So gewollt: Jede Zeit behält den Satz, der beim Erfassen galt (siehe 6.14). Der neue Satz gilt für
 neue Zeiten. Für einen einzelnen Eintrag: im Tab **Zeiten** mit ✏ eine andere Person wählen und
 wieder zurück — dann gilt der heutige Satz.
+
+**Ich habe die Admin-PIN vergessen.**
+Gibt es einen zweiten Admin, setzt er sie unter **Einstellungen → Benutzer → PIN zurücksetzen** zurück.
+Sonst geht es über die Konfigurationsdatei — das braucht Zugriff auf die Dateien des PCs, auf dem
+PLM läuft, und geht nicht über den Browser:
+
+1. `plm.config` öffnen. Sie liegt im PLM-Ordner neben `START-PLM.bat`; der genaue Pfad steht unter
+   **Einstellungen → Speicherort**.
+2. Eine Zeile `reset_admin_pin=1` anfügen und speichern.
+3. PLM beenden (**■ Beenden**) und neu starten.
+
+PLM entfernt beim Start die PINs aller Admins, löscht die Zeile wieder aus `plm.config` und
+vermerkt es in der Historie. Danach die Admin-Kachel ohne PIN wählen und gleich eine neue setzen.
+Die PINs der übrigen Personen bleiben.
+
+> Vorsorge: zwei Personen mit der Rolle Admin. Dann braucht es den Weg über die Datei nicht.
 
 **„Wer ist dran?“ erscheint jedes Mal.**
 Das ist so gewollt, sobald zwei oder mehr Personen angelegt sind. Allein arbeiten: die übrigen

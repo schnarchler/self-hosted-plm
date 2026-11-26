@@ -760,7 +760,8 @@ devices can reach it is decided by the PC's firewall.
 - Check for package vulnerabilities: `cd backend && npm audit --omit=dev`
 
 Users (Settings → Users) are for traceability, not for protection: they are selected
-without a password; each person can protect their tile with a PIN. Hourly rates, costs and the
+without a password; each person can protect their tile with a PIN or password (stored only as a
+scrypt hash, locked after 5 wrong attempts; admins can only reset it). Hourly rates, costs and the
 **⏱ Times** report are only sent to admins by the server. Deleting an item, project or order does
 not delete its times: the entries stay, with the number and name from back then. Usage: see
 [HANDBUCH.md](HANDBUCH.md), chapter Settings → Users.

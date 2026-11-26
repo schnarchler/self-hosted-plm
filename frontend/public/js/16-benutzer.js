@@ -114,7 +114,7 @@ function _showWhoOverlay(kind, s, done) {
       <form class="who-pin" hidden>
         <label class="fl" for="who-pin-input"></label>
         <div style="display:flex;gap:8px">
-          <input class="fi" id="who-pin-input" type="password" inputmode="numeric" autocomplete="off" maxlength="12">
+          <input class="fi" id="who-pin-input" type="password" autocomplete="off" maxlength="64">
           <button class="btn btn-primary btn-sm" type="submit">OK</button>
         </div>
         <div class="who-err"></div>
@@ -203,10 +203,11 @@ function _usersPanel(users, s, admin) {
         <span style="font-size:12px;color:var(--t3)">CHF/h</span></span>
       ${mode === 'team' ? roleSelect(u) : roleChip(u)}
       <button class="btn btn-ghost btn-sm" onclick="openUserTimeReport(${u.id})" title="${_t('Für welche Projekte und Aufträge diese Person wie viel gearbeitet hat')}">${_t('⏱ Zeiten')}</button>
-      ${mode === 'team' ? (u.has_pin
-        ? `<button class="btn btn-ghost btn-sm" onclick="_setUserPin(${u.id})">${_t('PIN ändern')}</button>
-           <button class="btn btn-ghost btn-sm" onclick="_saveUser(${u.id}, { pin: null })">${_t('PIN entfernen')}</button>`
-        : `<button class="btn btn-ghost btn-sm" onclick="_setUserPin(${u.id})">${_t('PIN setzen')}</button>`) : ''}
+      ${mode !== 'team' ? '' : u.id === s?.user?.id
+        ? `<button class="btn btn-ghost btn-sm" onclick="openOwnPinModal()">${u.has_pin ? _t('PIN ändern') : _t('PIN setzen')}</button>`
+        : u.has_pin
+          ? `<button class="btn btn-ghost btn-sm" onclick="_resetUserPin(${u.id})" title="${_t('Entfernt die PIN, z. B. wenn sie vergessen ist. Eine neue setzt die Person danach selbst.')}">${_t('PIN zurücksetzen')}</button>`
+          : `<span class="chip" title="${_t('Eine PIN setzt jede Person selbst unter Einstellungen → Benutzer')}">${_t('ohne PIN')}</span>`}
       ${mode !== 'team' ? '' : lastAdmin(u)
         ? `<span class="chip" title="${ONLY_ADMIN}">${_t('einziger Admin')}</span>`
         : `<button class="btn btn-ghost btn-sm" onclick="_saveUser(${u.id}, { active: false })" title="${_t('Bleibt in der Historie, steht aber nicht mehr zur Auswahl')}">${_t('Deaktivieren')}</button>`}
@@ -255,23 +256,23 @@ async function _saveUser(id, patch) {
   try { await api(`/api/users/${id}`, 'PUT', patch); toast(_t('Gespeichert'), 'ok'); } catch {}
   await _renderUsersSettings();
 }
-async function _setUserPin(id) {
+// Fremde PIN nur entfernen — die neue setzt die Person selbst, niemand sonst kennt sie
+async function _resetUserPin(id) {
   const name = _usersCache.find(u => u.id === id)?.name || '';
-  const pin = prompt(_t('PIN für {name} (4 bis 12 Zeichen):', { name }));
-  if (pin === null) return;
-  await _saveUser(id, { pin });
+  if (!confirm(_t('PIN von {name} zurücksetzen? {name} kann danach ohne PIN gewählt werden und setzt selbst eine neue.', { name }))) return;
+  await _saveUser(id, { pin: null });
 }
 // Eigene PIN: neue zweimal eintippen, die bisherige zur Bestätigung
 function openOwnPinModal(remove = false) {
   const has = !!state.session?.user?.has_pin;
   const pw = (id, label) => `<div class="fg"><label class="fl" for="${id}">${label}</label>
-    <input class="fi" id="${id}" type="password" inputmode="numeric" autocomplete="off" maxlength="12"></div>`;
+    <input class="fi" id="${id}" type="password" autocomplete="new-password" maxlength="64"></div>`;
   _showDynModal(`<div class="modal" style="max-width:380px;width:95vw">
     <div class="modal-head"><div class="modal-title">${remove ? _t('PIN entfernen') : has ? _t('PIN ändern') : _t('PIN setzen')}</div></div>
     <form class="modal-body" id="own-pin-form" style="display:flex;flex-direction:column;gap:4px">
       <div style="font-size:13px;color:var(--t3);margin-bottom:8px;line-height:1.55">${remove
         ? _t('Ohne PIN kann jede Person an diesem Gerät deine Kachel wählen.')
-        : _t('Die PIN wird abgefragt, wenn jemand zu dir wechselt — nicht, wenn du nach einer Pause weitermachst. 4 bis 12 Zeichen.')}</div>
+        : _t('Die PIN wird abgefragt, wenn jemand zu dir wechselt — nicht, wenn du nach einer Pause weitermachst. 4 bis 64 Zeichen: Ziffern, Buchstaben und Sonderzeichen, also auch ein normales Passwort. Gespeichert wird nur ein nicht umkehrbarer Hash — auch Admins sehen sie nie.')}</div>
       ${has ? pw('own-pin-cur', _t('Bisherige PIN')) : ''}
       ${remove ? '' : pw('own-pin-new', _t('Neue PIN')) + pw('own-pin-rep', _t('Neue PIN wiederholen'))}
       <div id="own-pin-err" style="font-size:13px;color:var(--red);min-height:18px"></div>

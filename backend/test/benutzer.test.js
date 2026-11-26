@@ -37,10 +37,7 @@ async function upload(revId, cookie) {
   assert.strictEqual(r.status, 200);
 }
 
-before(async () => {
-  tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'plm-user-'));
-  fs.mkdirSync(path.join(tmp, 'data'));
-  fs.writeFileSync(path.join(tmp, 'plm.config'), 'data_dir=' + path.join(tmp, 'data') + '\n');
+async function startServer() {
   serverProc = spawn('node', [path.join(__dirname, '..', 'server.js')], {
     env: { ...process.env, PLM_DATA_DIR: path.join(tmp, 'data'), PLM_PORT: String(PORT), PLM_CONFIG: path.join(tmp, 'plm.config') },
     stdio: 'ignore',
@@ -51,6 +48,19 @@ before(async () => {
     catch { await new Promise(r => setTimeout(r, 200)); }
   }
   if (!up) throw new Error('Server startet nicht');
+}
+// Beenden und warten, bis Port und Sperre frei sind
+async function stopServer() {
+  const done = new Promise(r => serverProc.once('exit', r));
+  serverProc.kill();
+  await done;
+}
+
+before(async () => {
+  tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'plm-user-'));
+  fs.mkdirSync(path.join(tmp, 'data'));
+  fs.writeFileSync(path.join(tmp, 'plm.config'), 'data_dir=' + path.join(tmp, 'data') + '\n');
+  await startServer();
   // Standard-Pflichtpunkte ausschalten: die Tests geben auch Teile ohne Datei und Gewicht frei
   await fetch(BASE + '/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ release_checks: '' }) });
@@ -428,9 +438,14 @@ test('PIN, mindestens ein Admin, Deaktivieren beendet die Auswahl', async () => 
   const letzte = await req(`/api/users/${ids.anna}`, { method: 'PUT', body: { role: 'superuser' }, cookie: anna });
   assert.strictEqual(letzte.status, 400);
   assert.match(letzte.body.error, /mindestens einen aktiven Admin/);
-  // Admin setzt und entfernt die PIN einer anderen Person (z. B. vergessen)
-  assert.strictEqual((await ok(`/api/users/${ids.ben}`, { method: 'PUT', body: { pin: '1234' }, cookie: anna })).body.has_pin, true);
+  // Eine fremde PIN setzt auch der Admin nicht — niemand soll das Passwort eines anderen kennen.
+  // Zurücksetzen (z. B. vergessen) geht.
+  const fremd = await req(`/api/users/${ids.ben}`, { method: 'PUT', body: { pin: '1234' }, cookie: anna });
+  assert.strictEqual(fremd.status, 403);
+  assert.match(fremd.body.error, /nur zurücksetzen/);
+  await ok('/api/session/pin', { method: 'PUT', body: { pin: '1234' }, cookie: ben });
   assert.strictEqual((await ok(`/api/users/${ids.ben}`, { method: 'PUT', body: { pin: null }, cookie: anna })).body.has_pin, false);
+  assert.ok(await log(e => e.entity_type === 'user' && e.entity_id === ids.ben && /PIN zurückgesetzt/.test(e.details)));
 
   // Eigene PIN: auch als Superuser, ändern und entfernen nur mit der bisherigen
   assert.strictEqual((await ok('/api/session/pin', { method: 'PUT', body: { pin: '1357' }, cookie: cleo })).body.has_pin, true);
@@ -442,6 +457,31 @@ test('PIN, mindestens ein Admin, Deaktivieren beendet die Auswahl', async () => 
   cleo = (await ok('/api/session', { method: 'POST', body: { user_id: ids.cleo, pin: '1357' } })).cookie;
   assert.strictEqual((await ok('/api/session/pin', { method: 'PUT', body: { pin: null, current_pin: '1357' }, cookie: cleo })).body.has_pin, false);
   assert.match((await log(e => e.entity_type === 'user' && e.entity_id === ids.cleo && /PIN entfernt/.test(e.details))).user_name, /Cleo/);
+
+  // Passwort statt PIN: Buchstaben, Sonderzeichen, bis 64 Zeichen — nie im Klartext gespeichert
+  const pw = 'Grüner Hügel 7! Sonnenschein';
+  await ok('/api/session/pin', { method: 'PUT', body: { pin: pw }, cookie: cleo });
+  assert.strictEqual((await req('/api/session/pin', { method: 'PUT', body: { pin: 'x'.repeat(65), current_pin: pw }, cookie: cleo })).status, 400, 'höchstens 64');
+  const backup = (await ok('/api/backups', { method: 'POST', cookie: anna })).body.name;
+  const dbFile = fs.readFileSync(path.join(tmp, 'data', 'backups', backup));
+  assert.ok(!dbFile.includes(Buffer.from(pw)) && !dbFile.includes(Buffer.from('Sonnenschein')), 'Passwort nicht im Klartext in der Datenbank');
+  for (const url of ['/api/session', '/api/users', '/api/changelog?limit=200']) {
+    assert.ok(!JSON.stringify((await ok(url, { cookie: anna })).body).includes('Sonnenschein'), url);
+  }
+
+  // Sperre: 5 Fehlversuche frei, danach warten — auch mit der richtigen PIN
+  for (let i = 0; i < 5; i++) {
+    assert.strictEqual((await req('/api/session', { method: 'POST', body: { user_id: ids.cleo, pin: 'falsch' + i } })).status, 403);
+  }
+  const gesperrt = await req('/api/session', { method: 'POST', body: { user_id: ids.cleo, pin: pw } });
+  assert.deepStrictEqual([gesperrt.status, gesperrt.body.pin_required], [429, true]);
+  assert.ok(gesperrt.body.retry_after > 0 && gesperrt.body.retry_after <= 30);
+  assert.match(gesperrt.body.error, /Zu viele falsche Versuche — bitte in \d+ Sekunden/);
+  assert.strictEqual((await req('/api/session/pin', { method: 'PUT', body: { pin: null, current_pin: pw }, cookie: cleo })).status, 429,
+    'auch beim Ändern der eigenen PIN');
+  // Zurücksetzen durch den Admin hebt die Sperre auf
+  await ok(`/api/users/${ids.cleo}`, { method: 'PUT', body: { pin: null }, cookie: anna });
+  cleo = (await ok('/api/session', { method: 'POST', body: { user_id: ids.cleo } })).cookie;
 
   await ok(`/api/users/${ids.ben}`, { method: 'PUT', body: { active: false }, cookie: anna });
   assert.strictEqual((await req('/api/projects', { method: 'POST', body: { name: 'Ben weg' }, cookie: ben })).status, 401);
@@ -483,4 +523,29 @@ test('Zurück auf eine Person: wieder allein, ohne Auswahl — und wieder Team b
   await ok(`/api/users/${ids.ben}`, { method: 'PUT', body: { active: true } });
   assert.strictEqual((await ok('/api/session')).body.mode, 'team');
   assert.strictEqual((await req('/api/projects', { method: 'POST', body: { name: 'Wer?' } })).status, 401, 'wieder fragen');
+});
+
+test('Admin-PIN vergessen: reset_admin_pin=1 in plm.config entfernt sie beim Start, einmalig', async () => {
+  // Stand: Anna (Admin, PIN 2468) und Ben (User) aktiv — Ben bekommt auch eine PIN
+  ben = (await ok('/api/session', { method: 'POST', body: { user_id: ids.ben } })).cookie;
+  await ok('/api/session/pin', { method: 'PUT', body: { pin: 'ben-geheim' }, cookie: ben });
+  const cfg = path.join(tmp, 'plm.config');
+  fs.appendFileSync(cfg, 'reset_admin_pin=1\n');
+  await stopServer();
+  await startServer();
+
+  const users = (await ok('/api/users')).body;
+  assert.strictEqual(users.find(u => u.id === ids.anna).has_pin, 0, 'Admin ohne PIN');
+  assert.strictEqual(users.find(u => u.id === ids.ben).has_pin, 1, 'andere behalten ihre');
+  assert.ok(!fs.readFileSync(cfg, 'utf8').includes('reset_admin_pin'), 'Zeile wieder entfernt');
+  assert.match(fs.readFileSync(cfg, 'utf8'), /data_dir=/, 'Rest bleibt');
+  assert.ok(await log(e => e.entity_type === 'user' && e.entity_id === ids.anna && /PIN zurückgesetzt \(über plm.config\)/.test(e.details)));
+  // Anna wählt sich ohne PIN und setzt eine neue
+  anna = (await ok('/api/session', { method: 'POST', body: { user_id: ids.anna } })).cookie;
+  await ok('/api/session/pin', { method: 'PUT', body: { pin: 'neu-1234' }, cookie: anna });
+
+  // Nur einmal: Der nächste Start lässt die PIN
+  await stopServer();
+  await startServer();
+  assert.strictEqual((await ok('/api/users')).body.find(u => u.id === ids.anna).has_pin, 1);
 });

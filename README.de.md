@@ -717,7 +717,8 @@ Geräte herankommen, entscheidet die Firewall des PCs.
 - Paketlücken prüfen: `cd backend && npm audit --omit=dev`
 
 Die Benutzer (Einstellungen → Benutzer) dienen der Nachvollziehbarkeit, nicht als Schutz:
-gewählt wird ohne Passwort; jede Person kann ihre Kachel mit einer PIN schützen. Stundensätze,
+gewählt wird ohne Passwort; jede Person kann ihre Kachel mit einer PIN oder einem Passwort schützen
+(nur als scrypt-Hash gespeichert, Sperre nach 5 Fehlversuchen; Admins können sie nur zurücksetzen). Stundensätze,
 Kosten und die Auswertung **⏱ Zeiten** liefert der Server nur an Admins aus. Gelöschte Items,
 Projekte und Aufträge nehmen ihre Zeiten nicht mit: Die Einträge bleiben, mit Nummer und Name von
 damals. Bedienung siehe
