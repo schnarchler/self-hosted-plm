@@ -193,7 +193,8 @@ ECO-Weg steht dort weiterhin zur Verfügung.
   und Normteile der Stückliste
 - **Zeiterfassung pro Person** – jede Zeit mit Person und dem Stundensatz beim Erfassen;
   Datenblatt mit **Entwicklungszeit** und **Entwicklungskosten** (samt Stückliste, nur das Total);
-  im Tab Zeiten die **Übersicht nach Person** (Kosten nur für Admins)
+  im Tab Zeiten die **Übersicht nach Person** (Kosten nur für Admins); im Team erfassen nur
+  Admins Zeiten für andere, alle anderen nur für sich selbst
 - Checkout-Import: neues Item auf Wunsch gleich öffnen
 - **Virtuelle Baugruppen (Phantom)** – ordnen nur die Stückliste: kein Kurzcode, nicht in Aufträgen;
   in Kalkulation und auf Belegen stehen direkt ihre Teile

@@ -26,10 +26,7 @@ async function loadTimeEntries(orderId) {
         <td style="font-family:var(--mono);font-size:13px;font-weight:600">${_fmtDur(e.hours)}</td>
         <td style="color:var(--t2)">${esc(e.description||'')}${_teUserLine(e)}</td>
         <td style="text-align:center"><span style="font-size:13px;padding:1px 7px;border-radius:10px;background:${e.billable?'rgba(110,222,156,.12)':'var(--bg2)'};color:${e.billable?'var(--green)':'var(--t3)'}">${e.billable?_t('Ja'):'—'}</span></td>
-        <td style="display:flex;gap:4px">
-          <button class="btn btn-ghost btn-sm btn-icon" onclick="openTimeModal(${JSON.stringify(e).replace(/"/g,'&quot;')})">✏</button>
-          <button class="btn btn-red btn-sm btn-icon" onclick="delTimeEntry(${e.id})">✕</button>
-        </td>
+        <td style="display:flex;gap:4px">${_teActions(e, 'openTimeModal', 'delTimeEntry')}</td>
       </tr>`).join('')}</tbody>
     </table></div>`
     : '<div style="color:var(--t3);font-size:13px;padding:12px 0">' + _t('Noch keine Zeiteinträge') + '</div>'}`;
@@ -101,10 +98,25 @@ function _teTimeValues(p) {
            start_time: both ? start : null, end_time: both ? end : null };
 }
 
+// Im Team erfassen nur Admins für andere; alle anderen nur für sich selbst
+// und bearbeiten nur ihre eigenen Einträge (der Server prüft dasselbe)
+function _teOwnOnly() { return state.session?.mode === 'team' && !isAdmin(); }
+function _teCanEdit(e) { return !_teOwnOnly() || (e.user_id != null && e.user_id === state.session?.user?.id); }
+function _teActions(e, editFn, delFn) {
+  return _teCanEdit(e) ? `
+    <button class="btn btn-ghost btn-sm btn-icon" onclick="${editFn}(${JSON.stringify(e).replace(/"/g,'&quot;')})">✏</button>
+    <button class="btn btn-red btn-sm btn-icon" onclick="${delFn}(${e.id})">✕</button>` : '';
+}
+
 // Person des Eintrags: Auswahl erst, wenn es Personen gibt. Neu: wer gerade dran ist.
 function _teUserField(p, e) {
   const users = state.session?.users || [];
   if (!users.length) return '';
+  if (_teOwnOnly()) {
+    const me = state.session.user;
+    return `<div class="fg"><label class="fl">${_t('Person')}</label>
+      <div class="fi" style="display:flex;align-items:center;gap:6px;opacity:.8">${_avatar(me?.name || '?', 18, me?.color)}${esc(me?.name || '—')}</div></div>`;
+  }
   const sel = e.id ? e.user_id : state.session?.user?.id;
   // Deaktivierte Person eines alten Eintrags bleibt wählbar
   const extra = e.user_id && !users.some(u => u.id === e.user_id) ? [{ id: e.user_id, name: e.user_name || '?' }] : [];
@@ -334,10 +346,7 @@ async function loadItemTimeEntries(itemId) {
           ${showCost ? `<td style="font-family:var(--mono);font-size:13px;text-align:right;white-space:nowrap">${e.rate != null
             ? `${fmtCHF(e.hours * e.rate)}<div style="font-size:12px;color:var(--t4)">${fmtCHF(e.rate)}/h</div>`
             : '<span style="color:var(--t4)">—</span>'}</td>` : ''}
-          <td style="white-space:nowrap">
-            <button class="btn btn-ghost btn-sm btn-icon" onclick="openItemTimeModal(${JSON.stringify(e).replace(/"/g,'&quot;')})">✏</button>
-            <button class="btn btn-red btn-sm btn-icon" onclick="delItemTimeEntry(${e.id})">✕</button>
-          </td>
+          <td style="white-space:nowrap">${_teActions(e, 'openItemTimeModal', 'delItemTimeEntry')}</td>
         </tr>`).join('')}
       </tbody>
     </table></div>` : ''}`;

@@ -323,6 +323,33 @@ test('Stundensatz pro Person: Zeiten tragen die Person, das Datenblatt rechnet d
   assert.strictEqual((await ok('/api/users', { cookie: anna })).body.find(u => u.id === ids.ben).hourly_rate, null, 'leer entfernt den Satz');
 });
 
+test('Zeiterfassung: Nicht-Admins nur für sich selbst, Admins für alle', async () => {
+  const proj = (await ok('/api/projects', { method: 'POST', body: { name: 'Eigene Zeiten' }, cookie: anna })).body;
+  const teil = (await ok(`/api/projects/${proj.id}/items`, { method: 'POST', body: { name: 'Lager', item_type: 'prt' }, cookie: anna })).body;
+
+  // Ben (User) und Cleo (Superuser) wählen eine andere Person — gebucht wird trotzdem auf sie selbst
+  const b = (await ok('/api/time-entries', { method: 'POST', body: { item_id: teil.id, hours: 1, user_id: ids.cleo }, cookie: ben })).body;
+  assert.strictEqual(b.user_id, ids.ben, 'User erfasst nur für sich');
+  const c = (await ok('/api/time-entries', { method: 'POST', body: { item_id: teil.id, hours: 1, user_id: null }, cookie: cleo })).body;
+  assert.strictEqual(c.user_id, ids.cleo, 'Superuser auch, auch nicht „ohne Person“');
+
+  // Fremde Einträge weder bearbeiten noch löschen; eigene schon, ohne die Person zu wechseln
+  assert.strictEqual((await req(`/api/time-entries/${c.id}`, { method: 'PUT', body: { date: '2026-11-03', hours: 2 }, cookie: ben })).status, 403);
+  assert.strictEqual((await req(`/api/time-entries/${c.id}`, { method: 'DELETE', cookie: ben })).status, 403);
+  await ok(`/api/time-entries/${b.id}`, { method: 'PUT', body: { date: '2026-11-03', hours: 2, user_id: ids.cleo }, cookie: ben });
+  let entries = (await ok(`/api/time-entries?item_id=${teil.id}`, { cookie: anna })).body;
+  assert.deepStrictEqual(entries.find(e => e.id === b.id).user_id, ids.ben, 'Person bleibt Ben');
+  assert.strictEqual(entries.find(e => e.id === b.id).hours, 2);
+
+  // Admin erfasst und ändert für andere
+  const a = (await ok('/api/time-entries', { method: 'POST', body: { item_id: teil.id, hours: 1, user_id: ids.ben }, cookie: anna })).body;
+  assert.strictEqual(a.user_id, ids.ben);
+  await ok(`/api/time-entries/${c.id}`, { method: 'PUT', body: { date: '2026-11-03', hours: 1, user_id: ids.ben }, cookie: anna });
+  await ok(`/api/time-entries/${b.id}`, { method: 'DELETE', cookie: ben });
+  assert.strictEqual((await req('/api/time-entries/999999', { method: 'DELETE', cookie: ben })).status, 404);
+  await ok(`/api/projects/${proj.id}`, { method: 'DELETE', cookie: anna });
+});
+
 test('Rückmeldungen: jeder reicht ein, nur Admins sehen und erledigen sie', async () => {
   const sent = { kind: 'BUG', text: 'Dropdown abgeschnitten\nim Dialog',
     context: { view: 'Projekte', item: '003-prt-003 – Abdeckung', errors: ['GET /api/x → 500 kaputt'], pin_hash: 'nicht übernehmen' } };

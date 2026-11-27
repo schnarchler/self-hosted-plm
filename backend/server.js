@@ -51,6 +51,13 @@ function removeConfigKey(key) {
   fs.writeFileSync(PLM_CONFIG_PATH, lines.filter(l => !l.trim().startsWith(key + '=')).join('\n'));
 }
 
+// Vorlage für den CAD-Pfad (Button 🖥 CAD) — auskommentiert, zum Anpassen
+const CAD_PATH_TEMPLATE =
+  '# CAD-Programm fuer den Button "CAD" (vollstaendiger Pfad zur Programmdatei)\n' +
+  '# Zum Aktivieren das # am Zeilenanfang entfernen und den Pfad anpassen:\n' +
+  '#   Windows: cad_path=C:\\Program Files\\Siemens\\Solid Edge 2025\\Program\\Edge.exe\n' +
+  '#   Linux:   cad_path=/usr/bin/freecad\n' +
+  '#   macOS:   cad_path=/Applications/FreeCAD.app/Contents/MacOS/FreeCAD\n';
 if (!fs.existsSync(PLM_CONFIG_PATH)) {
   fs.writeFileSync(PLM_CONFIG_PATH,
     '# PLM Konfiguration - Datenpfad fuer diesen PC anpassen\n' +
@@ -58,7 +65,9 @@ if (!fs.existsSync(PLM_CONFIG_PATH)) {
     '# Beispiele:\n' +
     '#   Windows: data_dir=D:\\Proton Drive\\My files\\plm-data\n' +
     '#   Linux:   data_dir=/home/user/plm-data\n' +
-    'data_dir=\n');
+    'data_dir=\n' +
+    '\n' +
+    CAD_PATH_TEMPLATE);
   console.log('plm.config erstellt: ' + PLM_CONFIG_PATH);
 }
 const _config = loadConfig();
@@ -6521,9 +6530,16 @@ app.post('/api/printers', (req, res) => {
   res.json(get('SELECT * FROM printers WHERE id=?', [id]));
 });
 app.put('/api/printers/:id', (req, res) => {
-  const { name, cost_per_hour } = req.body;
-  run('UPDATE printers SET name=?,cost_per_hour=? WHERE id=?', [name, cost_per_hour||0, req.params.id]);
-  res.json(get('SELECT * FROM printers WHERE id=?', [req.params.id]));
+  const name = String(req.body.name ?? '').trim();
+  if (!name) return res.status(400).json({ error: 'Name fehlt' });
+  const before = get('SELECT * FROM printers WHERE id=?', [req.params.id]);
+  if (!before) return res.status(404).json({ error: 'Nicht gefunden' });
+  const cost = parseFloat(req.body.cost_per_hour);
+  run('UPDATE printers SET name=?,cost_per_hour=? WHERE id=?', [name, Number.isFinite(cost) && cost > 0 ? cost : 0, before.id]);
+  // Auftragspositionen verweisen über den Namen auf den Drucker — umbenennen
+  // soll ihnen die Druckkosten nicht wegnehmen
+  if (before.name !== name) run('UPDATE order_items SET printer_name=? WHERE printer_name=?', [name, before.name]);
+  res.json(get('SELECT * FROM printers WHERE id=?', [before.id]));
 });
 app.delete('/api/printers/:id', (req, res) => {
   run('DELETE FROM printers WHERE id=?', [req.params.id]);
@@ -8809,8 +8825,21 @@ function _timeRange({ start_time, end_time }) {
   const ok = t => typeof t === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(t);
   return ok(start_time) && ok(end_time) ? [start_time, end_time] : [null, null];
 }
+// Im Team erfassen nur Admins Zeiten für andere — alle anderen nur für sich
+// selbst, und sie bearbeiten oder löschen nur ihre eigenen Einträge
+const ownTimeOnly = req => req.plmMode === 'team' && req.plmUser?.role !== 'admin';
+function _ownTimeEntry(req, res) {
+  const te = get('SELECT id, user_id FROM time_entries WHERE id=?', [req.params.id]);
+  if (!te) { res.status(404).json({ error: 'Nicht gefunden' }); return null; }
+  if (ownTimeOnly(req) && te.user_id !== req.plmUser.id) {
+    res.status(403).json({ error: 'Nur eigene Zeiten — Zeiten anderer Personen erfasst der Admin.' });
+    return null;
+  }
+  return te;
+}
 // Person des Eintrags: mitgeschickt (leer = niemand) oder wer gerade dran ist
 function _timeUser(req) {
+  if (ownTimeOnly(req)) return req.plmUser.id;
   if (!Object.prototype.hasOwnProperty.call(req.body, 'user_id')) return req.plmUser?.id ?? null;
   const id = parseInt(req.body.user_id);
   return id && get('SELECT id FROM users WHERE id=?', [id]) ? id : null;
@@ -8830,6 +8859,7 @@ app.post('/api/time-entries', (req, res) => {
 });
 
 app.put('/api/time-entries/:id', (req, res) => {
+  if (!_ownTimeEntry(req, res)) return;
   const { date, hours, description, billable } = req.body;
   run('UPDATE time_entries SET date=?,hours=?,description=?,billable=?,start_time=?,end_time=? WHERE id=?',
     [date, parseFloat(hours), description||'', billable?1:0, ..._timeRange(req.body), req.params.id]);
@@ -8845,6 +8875,7 @@ app.put('/api/time-entries/:id', (req, res) => {
 });
 
 app.delete('/api/time-entries/:id', (req, res) => {
+  if (!_ownTimeEntry(req, res)) return;
   run('DELETE FROM time_entries WHERE id=?', [req.params.id]);
   res.json({ success: true });
 });

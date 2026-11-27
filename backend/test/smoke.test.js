@@ -174,6 +174,25 @@ test('Zeiterfassung: Von–Bis wird gespeichert, nur Dauer löscht die Uhrzeiten
   assert.strictEqual((await api(`/api/time-entries?order_id=${o.id}`)).length, 2);
 });
 
+test('Drucker: Kosten und Name lassen sich nachträglich ändern', async () => {
+  const pr = await api('/api/printers', 'POST', { name: 'MK4', cost_per_hour: 1.2 });
+  const o = await api('/api/orders', 'POST', { title: 'Druckertest' });
+  const pos = await api(`/api/orders/${o.id}/items`, 'POST', { description: 'Druck', quantity: 1, printer_name: 'MK4', estimated_print_hours: 2 });
+  const upd = await api(`/api/printers/${pr.id}`, 'PUT', { name: 'MK4S', cost_per_hour: 2.5 });
+  assert.deepStrictEqual([upd.name, upd.cost_per_hour], ['MK4S', 2.5]);
+  const items = (await api(`/api/orders/${o.id}`)).items;
+  assert.strictEqual(items.find(i => i.id === pos.id).printer_name, 'MK4S', 'Position folgt der Umbenennung');
+  await assert.rejects(api(`/api/printers/${pr.id}`, 'PUT', { name: ' ', cost_per_hour: 1 }), /HTTP 400/);
+  await api(`/api/orders/${o.id}`, 'DELETE');
+  await api(`/api/printers/${pr.id}`, 'DELETE');
+});
+
+test('plm.config: neue Datei enthält die Vorlage für den CAD-Pfad', () => {
+  const cfg = fs.readFileSync(path.join(dataDir, 'plm.config'), 'utf8');
+  assert.match(cfg, /^#\s+Windows: cad_path=C:\\Program Files\\/m);
+  assert.ok(!/^cad_path=/m.test(cfg), 'nur als Kommentar');
+});
+
 test('Programmdateien: Browser fragt immer nach, lädt Unverändertes aber nicht neu', async () => {
   for (const f of ['/js/01-core.js', '/styles.css', '/']) {
     const r = await fetch(BASE + f);

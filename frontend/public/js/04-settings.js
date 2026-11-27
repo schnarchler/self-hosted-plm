@@ -902,13 +902,23 @@ async function loadAndRenderPrinterConfig() {
   if (nzSel) nzSel.innerHTML = '<option value="">—</option>' +
     state.nozzles.map(n=>`<option value="${n.size}">${n.size} mm</option>`).join('');
 }
+// Drucker, der gerade in seiner Zeile bearbeitet wird (Name und Kosten)
+let _editPrinterId = null;
 function _renderPrinterList() {
   const el = document.getElementById('st-printers-list'); if (!el) return;
-  el.innerHTML = state.printers.length ? state.printers.map(p => `
-    <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--bg2);border:1px solid var(--line);border-radius:var(--r);margin-bottom:4px">
+  const row = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 10px;background:var(--bg2);border:1px solid var(--line);border-radius:var(--r);margin-bottom:4px';
+  el.innerHTML = state.printers.length ? state.printers.map(p => p.id === _editPrinterId ? `
+    <div style="${row}" onkeydown="if(event.key==='Enter')savePrinter(${p.id});else if(event.key==='Escape')editPrinter(null)">
+      <input class="fi" id="st-pr-edit-name" style="flex:1;min-width:140px" value="${esc(p.name)}" placeholder="${_t('Druckername')}">
+      <input class="fi" id="st-pr-edit-cost" type="number" step="0.01" min="0" style="width:110px" value="${p.cost_per_hour ?? ''}">
+      <span style="font-size:13px;color:var(--t3)">CHF/h</span>
+      <button class="btn btn-primary btn-sm" onclick="savePrinter(${p.id})">${_t('✓ Speichern')}</button>
+      <button class="btn btn-ghost btn-sm" onclick="editPrinter(null)">${_t('Abbrechen')}</button>
+    </div>` : `
+    <div style="${row}">
       <span style="flex:1;font-weight:500">${esc(p.name)}</span>
       <span style="font-family:var(--mono);font-size:13px;color:var(--t3)">${p.cost_per_hour} CHF/h</span>
-      <button class="btn btn-icon btn-ghost btn-sm" onclick="editPrinter(${p.id},'${esc(p.name)}',${p.cost_per_hour})">✏️</button>
+      <button class="btn btn-icon btn-ghost btn-sm" onclick="editPrinter(${p.id})">✏️</button>
       <button class="btn btn-icon btn-red btn-sm" onclick="delPrinter(${p.id})">✕</button>
     </div>`).join('') : '<div style="color:var(--t3);font-size:13px;padding:4px 0">' + _t('Noch keine Drucker hinterlegt.') + '</div>';
 }
@@ -939,10 +949,18 @@ async function addPrinter() {
   document.getElementById('st-pr-cost').value = '';
   await loadAndRenderPrinterConfig(); toast(_t('Drucker gespeichert'),'ok');
 }
-async function editPrinter(id, name, cost) {
-  const newName = prompt(_t('Druckername:'), name); if (!newName) return;
-  const newCost = prompt(_t('Kosten (CHF/h):'), cost);
-  await api(`/api/printers/${id}`,'PUT',{name:newName, cost_per_hour:parseFloat(newCost)||0});
+// ✏️ öffnet die Zeile zum Bearbeiten, null schliesst sie wieder
+function editPrinter(id) {
+  _editPrinterId = id;
+  _renderPrinterList();
+  if (id) document.getElementById('st-pr-edit-cost')?.select();
+}
+async function savePrinter(id) {
+  const name = document.getElementById('st-pr-edit-name').value.trim();
+  if (!name) return toast(_t('Name fehlt'),'err');
+  const cost = parseFloat(document.getElementById('st-pr-edit-cost').value) || 0;
+  await api(`/api/printers/${id}`,'PUT',{name, cost_per_hour:cost});
+  _editPrinterId = null;
   await loadAndRenderPrinterConfig(); state._psConfigLoaded = false; toast(_t('Gespeichert'),'ok');
 }
 async function delPrinter(id) {

@@ -215,7 +215,8 @@ Implement (creates the revision to work in for each part) → Done.
   standard parts in their BOM
 - **Time tracking per person**: every entry with its person and the hourly rate at the time it
   was logged; data sheet with **development time** and **development costs** (including the BOM,
-  total only); the Times tab shows an **overview by person** (costs for admins only)
+  total only); the Times tab shows an **overview by person** (costs for admins only); in a team
+  only admins log time for others, everyone else only for themselves
 - Checkout import: optionally open the new item right away
 - **Virtual (phantom) assemblies**: only structure the BOM; no short code, not in orders; costing
   and documents list their parts directly

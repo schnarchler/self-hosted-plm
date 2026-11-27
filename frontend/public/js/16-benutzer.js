@@ -67,6 +67,8 @@ function _afterUserChange() {
   else if (state.view === 'settings') renderSettings();
   else if (state.view === 'dashboard') renderDashboard();   // Rückmeldungen nur für Admins
   else if (state.item && document.getElementById('it-sheet')) renderItemDetail(state.item, state.activeRevId);
+  // Zeiten im offenen Auftrag: Bearbeiten nur bei eigenen Einträgen (ausser Admin)
+  if (_teOrderId && document.getElementById('time-entries-list')) loadTimeEntries(_teOrderId);
 }
 
 // Kacheln in der Reihenfolge vom Server (zuletzt aktiv zuerst); beim

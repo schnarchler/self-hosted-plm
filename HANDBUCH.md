@@ -533,6 +533,9 @@ die Stunden selbst aus (auch über Mitternacht). Gleich funktioniert der Tab **Z
 
 **Person:** Jeder Eintrag gehört zu einer Person. Vorgewählt ist, wer gerade dran ist; im Feld
 **Person** lässt sie sich ändern. Die Person steht mit ihrer Funktion unter der Beschreibung.
+Arbeiten mehrere Personen mit PLM, wählen nur **Admins** eine andere Person: Alle anderen erfassen
+Zeiten nur für sich selbst und bearbeiten oder löschen nur ihre eigenen Einträge (bei fremden
+fehlen ✏ und ✕).
 
 **Stundensatz:** Beim Speichern hält PLM den Satz fest, der in diesem Moment gilt: den eigenen der
 Person, sonst den Standard-Stundensatz (siehe 20, Benutzer und Belege & Preise).
@@ -1254,6 +1257,7 @@ Prüfpunkte der Vorlage mit Soll-Wert, Reihenfolge; **Vorschau** zeigt das Ergeb
 
 ### 3D-Druck
 Slicer, Drucker (mit CHF/h), Düsen und Materialprofile (**+ Drucker hinzufügen**, **+ Düse hinzufügen**, **+ Vorlage hinzufügen**).
+Name und Kosten eines Druckers lassen sich jederzeit ändern: ✏️ öffnet die Zeile, **✓ Speichern** (oder Enter) übernimmt. Auftragspositionen mit diesem Drucker folgen einer Umbenennung.
 
 **Slicer** — PrusaSlicer, Bambu Studio oder Creality Print für „Im Slicer öffnen“ (Datenblatt und Dateien einer Revision). Das Programm wird an den üblichen Orten gesucht (**↻ Neu suchen**); ist keiner installiert, bleibt der Knopf grau. Liegt es woanders: in `plm.config` `prusaslicer=…`, `bambustudio=…` bzw. `crealityprint=…` eintragen. Die Arbeitskopie landet als `<Kurzcode>_<Name>.stl` im Unterordner `Slicer` des Checkout-Verzeichnisses; eine im Slicer gespeicherte Kopie wird nicht überschrieben.
 
@@ -1261,7 +1265,7 @@ Slicer, Drucker (mit CHF/h), Düsen und Materialprofile (**+ Drucker hinzufügen
 
 ### CAD & Checkout
 Gilt nur für diesen PC (steht in `plm.config`) und ist nur dort änderbar.
-- **CAD-Programm** — zeigt, ob das Programm für den 🖥 CAD-Button gefunden wird (**↻ Neu prüfen**). Der Pfad steht in `plm.config` (`cad_path=…`), nicht in der Oberfläche: Die Einstellungen sind ohne Anmeldung im ganzen Netz erreichbar
+- **CAD-Programm** — zeigt, ob das Programm für den 🖥 CAD-Button gefunden wird (**↻ Neu prüfen**). Der Pfad steht in `plm.config` (`cad_path=…`, eine auskommentierte Vorlage steht in neuen Dateien schon drin), nicht in der Oberfläche: Die Einstellungen sind ohne Anmeldung im ganzen Netz erreichbar
 - **Checkout-Verzeichnis** — Zielordner für Checkouts. War früher ein Ordner eingetragen, den es auf diesem PC nicht gibt, steht er darunter als Hinweis
 
 ### Datensätze löschen
